@@ -15,8 +15,11 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-import usb.core
-import usb.util
+try:
+    import usb.core
+    import usb.util
+except ImportError:
+    usb = None
 
 from .protocol import VENDOR_VID, VENDOR_PID, BULK_OUT_EP, BULK_IN_EP
 
@@ -130,11 +133,13 @@ class UsbLink:
                 total += written
                 offset = end
             return total
-        except usb.core.USBError as exc:
-            logger.error("USB write error: %s", exc)
-            self._release()
-            self.state = DISCONNECTED
-            raise ConnectionError(str(exc)) from exc
+        except Exception as exc:
+            if usb is not None and isinstance(exc, usb.core.USBError):
+                logger.error("USB write error: %s", exc)
+                self._release()
+                self.state = DISCONNECTED
+                raise ConnectionError(str(exc)) from exc
+            raise
 
     def read(self, length: int = 64, timeout: int = USB_TIMEOUT) -> bytes:
         """Read data from the bulk IN endpoint."""
@@ -149,13 +154,15 @@ class UsbLink:
                 timeout=timeout,
             )
             return bytes(data)
-        except usb.core.USBError as exc:
-            if "timeout" in str(exc).lower():
-                return b""
-            logger.error("USB read error: %s", exc)
-            self._release()
-            self.state = DISCONNECTED
-            raise ConnectionError(str(exc)) from exc
+        except Exception as exc:
+            if usb is not None and isinstance(exc, usb.core.USBError):
+                if "timeout" in str(exc).lower():
+                    return b""
+                logger.error("USB read error: %s", exc)
+                self._release()
+                self.state = DISCONNECTED
+                raise ConnectionError(str(exc)) from exc
+            raise
 
     def mark_ready(self) -> None:
         """Called by daemon after init/test blit confirms the device works."""
@@ -173,6 +180,10 @@ class UsbLink:
     # ------------------------------------------------------------------
 
     def _try_connect(self) -> None:
+        if usb is None:
+            logger.error("pyusb not installed. Install with: pip install pyusb libusb-package")
+            self.state = ERROR_FATAL
+            return
         self.state = CLAIMING
         logger.info("Device state: CLAIMING")
         try:
@@ -191,7 +202,7 @@ class UsbLink:
             # Claim the interface
             try:
                 usb.util.claim_interface(self.dev, info.vendor_interface)
-            except usb.core.USBError as exc:
+            except Exception as exc:
                 logger.error("Cannot claim interface %d: %s", info.vendor_interface, exc)
                 logger.error("Another program may own the device. Exiting.")
                 self.state = ERROR_FATAL
@@ -201,10 +212,13 @@ class UsbLink:
             self.state = INITIALIZING
             logger.info("Device state: INITIALIZING — %s", info)
 
-        except usb.core.USBError as exc:
-            logger.error("USB error during connect: %s", exc)
-            self._release()
-            self.state = DISCONNECTED
+        except Exception as exc:
+            if usb is not None and isinstance(exc, usb.core.USBError):
+                logger.error("USB error during connect: %s", exc)
+                self._release()
+                self.state = DISCONNECTED
+            else:
+                raise
 
     def _find_vendor_interface(self) -> Optional[DeviceInfo]:
         """Scan interfaces and find the vendor-specific one."""
@@ -274,6 +288,8 @@ class UsbLink:
 
     def _device_present(self) -> bool:
         if self.dev is None:
+            return False
+        if usb is None:
             return False
         try:
             _ = self.dev.get_active_configuration()

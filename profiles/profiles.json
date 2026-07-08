@@ -1,40 +1,158 @@
 {
   "version": 1,
   "active_profile": "default",
-  "settings": { "brightness": 80, "fps_cap": 15 },
+  "settings": {
+    "brightness": 80,
+    "fps_cap": 15
+  },
   "auto_switch": {},
   "profiles": {
     "default": {
-      "screen": { "type": "image", "path": "images/bg.png" },
+      "screen": {
+        "type": "image",
+        "path": "images/bg.png"
+      },
       "keys": [
-        { "image": null, "label": "Key 0", "action": null },
-        { "image": null, "label": "Key 1", "action": null },
-        { "image": null, "label": "Key 2", "action": null },
-        { "image": null, "label": "Key 3", "action": null },
-        { "image": null, "label": "Key 4", "action": null },
-        { "image": null, "label": "Key 5", "action": null },
-        { "image": null, "label": "Key 6", "action": null },
-        { "image": null, "label": "Key 7", "action": null },
-        { "image": null, "label": "Key 8", "action": null },
-        { "image": null, "label": "Key 9", "action": null }
+        {
+          "image": "images/key0.png",
+          "label": "Key 0",
+          "action": null
+        },
+        {
+          "image": "images/key1.png",
+          "label": "Key 1",
+          "action": null
+        },
+        {
+          "image": "images/key2.png",
+          "label": "Key 2",
+          "action": null
+        },
+        {
+          "image": "images/key3.png",
+          "label": "Key 3",
+          "action": null
+        },
+        {
+          "image": "images/key4.png",
+          "label": "Key 4",
+          "action": null
+        },
+        {
+          "image": "images/key5.png",
+          "label": "Key 5",
+          "action": null
+        },
+        {
+          "image": "images/key6.png",
+          "label": "Key 6",
+          "action": null
+        },
+        {
+          "image": "images/key7.png",
+          "label": "Key 7",
+          "action": null
+        },
+        {
+          "image": "images/key8.png",
+          "label": "Key 8",
+          "action": null
+        },
+        {
+          "image": "images/key9.png",
+          "label": "Key 9",
+          "action": null
+        }
       ]
     },
     "media": {
-      "screen": { "type": "widget_board", "widgets": [
-        { "type": "clock", "x": 280, "y": 200 },
-        { "type": "cpu_ram", "x": 10, "y": 10 }
-      ]},
+      "screen": {
+        "type": "widget_board",
+        "widgets": [
+          {
+            "type": "clock",
+            "x": 280,
+            "y": 200
+          },
+          {
+            "type": "cpu_ram",
+            "x": 10,
+            "y": 10
+          }
+        ]
+      },
       "keys": [
-        { "image": null, "label": "Play/Pause", "action": { "type": "media", "key": "play_pause" } },
-        { "image": null, "label": "Next", "action": { "type": "media", "key": "next" } },
-        { "image": null, "label": "Prev", "action": { "type": "media", "key": "prev" } },
-        { "image": null, "label": "Vol+", "action": { "type": "media", "key": "vol_up" } },
-        { "image": null, "label": "Vol-", "action": { "type": "media", "key": "vol_down" } },
-        { "image": null, "label": "Mute", "action": { "type": "media", "key": "mute" } },
-        { "image": null, "label": "", "action": null },
-        { "image": null, "label": "", "action": null },
-        { "image": null, "label": "", "action": null },
-        { "image": null, "label": "Default", "action": { "type": "profile", "name": "default" } }
+        {
+          "image": null,
+          "label": "Play/Pause",
+          "action": {
+            "type": "media",
+            "key": "play_pause"
+          }
+        },
+        {
+          "image": null,
+          "label": "Next",
+          "action": {
+            "type": "media",
+            "key": "next"
+          }
+        },
+        {
+          "image": null,
+          "label": "Prev",
+          "action": {
+            "type": "media",
+            "key": "prev"
+          }
+        },
+        {
+          "image": null,
+          "label": "Vol+",
+          "action": {
+            "type": "media",
+            "key": "vol_up"
+          }
+        },
+        {
+          "image": null,
+          "label": "Vol-",
+          "action": {
+            "type": "media",
+            "key": "vol_down"
+          }
+        },
+        {
+          "image": null,
+          "label": "Mute",
+          "action": {
+            "type": "media",
+            "key": "mute"
+          }
+        },
+        {
+          "image": null,
+          "label": "",
+          "action": null
+        },
+        {
+          "image": null,
+          "label": "",
+          "action": null
+        },
+        {
+          "image": null,
+          "label": "",
+          "action": null
+        },
+        {
+          "image": null,
+          "label": "Default",
+          "action": {
+            "type": "profile",
+            "name": "default"
+          }
+        }
       ]
     }
   }

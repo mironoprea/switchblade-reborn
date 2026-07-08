@@ -119,7 +119,18 @@ class Daemon:
         try:
             from .webui.app import create_app
             self._web_app = create_app(self)
-            self._web_app.run(host="127.0.0.1", port=8377, debug=False, use_reloader=False)
+            self._web_thread = threading.Thread(
+                target=self._web_app.run,
+                kwargs={
+                    "host": "127.0.0.1",
+                    "port": 8377,
+                    "debug": False,
+                    "use_reloader": False,
+                },
+                daemon=True,
+            )
+            self._web_thread.start()
+            logger.info("Web UI started at http://127.0.0.1:8377")
         except ImportError:
             logger.warning("Flask not available; web UI disabled.")
         except Exception as exc:
@@ -349,6 +360,14 @@ class Daemon:
             self.input_listener.stop()
         if self._auto_switcher:
             self._auto_switcher.stop()
+        if self._web_app:
+            try:
+                # Signal Flask to shut down
+                func = self._web_app.view_functions.get("shutdown", None)
+                if func:
+                    func()
+            except Exception:
+                pass
         self.link.disconnect()
         logger.info("Shutdown complete.")
 

@@ -49,38 +49,6 @@ def image_to_rgb565(
     return bytes(buf)
 
 
-def fast_image_to_rgb565(
-    img: Image.Image,
-    *,
-    endian: str = "big",
-) -> bytes:
-    """Faster RGB565 conversion using PIL's raw encoder.
-
-    Falls back to :func:`image_to_rgb565` if the raw encoder is unavailable.
-    """
-    if endian not in ("big", "little"):
-        raise ValueError(f"endian must be 'big' or 'little', got {endian!r}")
-
-    img = img.convert("RGB")
-    r, g, b = img.split()
-    # Build a 16-bit image by bit-shifting channels
-    # We pack: r5 << 11 | g6 << 5 | b5
-    # PIL doesn't have a native RGB565 mode, but we can use a fast path
-    # by constructing an "I;16" image from shifted values.
-    import numpy as np
-
-    arr = np.asarray(img, dtype=np.uint8)
-    # arr shape: (h, w, 3)
-    r5 = (arr[:, :, 0].astype(np.uint16) >> 3) & 0x1F
-    g6 = (arr[:, :, 1].astype(np.uint16) >> 2) & 0x3F
-    b5 = (arr[:, :, 2].astype(np.uint16) >> 3) & 0x1F
-    val = (r5 << 11) | (g6 << 5) | b5
-    if endian == "big":
-        return val.tobytes().swapaxes(0, 1).tobytes() if val.ndim > 1 else val.tobytes()
-    else:
-        return val.astype("<u2").tobytes() if val.ndim > 1 else val.tobytes()
-
-
 def image_to_rgb565_fast(img: Image.Image, *, endian: str = "big") -> bytes:
     """Optimized RGB565 using numpy bit operations."""
     import numpy as np

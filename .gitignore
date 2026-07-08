@@ -9,3 +9,15 @@ captures/*.pcapng
 profiles/images/*.png
 profiles/images/*.jpg
 !profiles/images/.gitkeep
+# Keep sample/placeholder images in the repo
+!profiles/images/bg.png
+!profiles/images/key0.png
+!profiles/images/key1.png
+!profiles/images/key2.png
+!profiles/images/key3.png
+!profiles/images/key4.png
+!profiles/images/key5.png
+!profiles/images/key6.png
+!profiles/images/key7.png
+!profiles/images/key8.png
+!profiles/images/key9.png
