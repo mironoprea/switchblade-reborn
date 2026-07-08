@@ -147,5 +147,7 @@ python -m pytest tests/ -v
 
 ## License
 
+MIT License. See [LICENSE](LICENSE) for details.
+
 This project is a clean-room implementation. The wire protocol is derived from
 public sources and real hardware captures — no GPL code is included.
