@@ -364,14 +364,7 @@ class Daemon:
             self.input_listener.stop()
         if self._auto_switcher:
             self._auto_switcher.stop()
-        if self._web_app:
-            try:
-                # Signal Flask to shut down
-                func = self._web_app.view_functions.get("shutdown", None)
-                if func:
-                    func()
-            except Exception:
-                pass
+        # Web UI runs as daemon thread - it will be killed when the process exits
         self.link.disconnect()
         logger.info("Shutdown complete.")
 
