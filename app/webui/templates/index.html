@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Switchblade Reborn</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e; color: #e0e0e0; padding: 20px;
+    }
+    h1 { color: #00d4ff; margin-bottom: 20px; }
+    h2 { color: #00b8d4; margin: 15px 0 10px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .status-bar {
+      background: #16213e; padding: 12px 16px; border-radius: 8px;
+      margin-bottom: 20px; display: flex; gap: 20px; align-items: center;
+    }
+    .status-item { font-size: 14px; }
+    .status-item span { color: #00d4ff; font-weight: bold; }
+    .profile-bar {
+      background: #16213e; padding: 12px 16px; border-radius: 8px;
+      margin-bottom: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    }
+    select, button, input[type="text"] {
+      background: #0f3460; color: #e0e0e0; border: 1px solid #00d4ff;
+      padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px;
+    }
+    button:hover { background: #16537e; }
+    .key-grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px;
+    }
+    .key-card {
+      background: #16213e; border-radius: 8px; padding: 12px; text-align: center;
+    }
+    .key-card img {
+      width: 80px; height: 80px; object-fit: cover; border-radius: 4px;
+      margin-bottom: 8px; background: #0a0a0a;
+    }
+    .key-card .label { font-size: 13px; font-weight: bold; }
+    .key-card .action { font-size: 11px; color: #888; margin-top: 4px; }
+    .screen-preview {
+      width: 100%; max-width: 400px; border-radius: 8px;
+      border: 2px solid #00d4ff;
+    }
+    .section { margin-bottom: 30px; }
+    .edit-form {
+      background: #16213e; padding: 16px; border-radius: 8px;
+    }
+    .edit-form label { display: block; margin: 8px 0 4px; font-size: 13px; }
+    .edit-form input, .edit-form select { width: 100%; margin-bottom: 8px; }
+    .error { color: #ff5252; font-size: 14px; margin: 10px 0; }
+    .success { color: #4caf50; font-size: 14px; margin: 10px 0; }
+    .key-edit-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚡ Switchblade Reborn</h1>
+
+    <div class="status-bar" id="statusBar">
+      <div class="status-item">Connection: <span id="connState">—</span></div>
+      <div class="status-item">Active profile: <span id="activeProfile">—</span></div>
+    </div>
+
+    <div class="section">
+      <h2>Profile Switch</h2>
+      <div class="profile-bar">
+        <select id="profileSelect"></select>
+        <button onclick="activateProfile()">Activate</button>
+        <button onclick="reloadProfiles()">Reload</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Key Layout</h2>
+      <div class="key-grid" id="keyGrid"></div>
+    </div>
+
+    <div class="section">
+      <h2>Screen Background</h2>
+      <img class="screen-preview" id="screenPreview" alt="Screen preview">
+    </div>
+
+    <div class="section">
+      <h2>Upload Image</h2>
+      <div class="edit-form">
+        <label for="uploadFile">Image file (max 20 MB):</label>
+        <input type="file" id="uploadFile" accept="image/*">
+        <button onclick="uploadImage()">Upload</button>
+        <div id="uploadMsg"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Edit Key</h2>
+      <div class="edit-form">
+        <label>Key index (0-9):</label>
+        <input type="number" id="editKeyIndex" min="0" max="9" value="0">
+        <label>Label:</label>
+        <input type="text" id="editKeyLabel" placeholder="Discord">
+        <label>Image path:</label>
+        <input type="text" id="editKeyImage" placeholder="images/discord.png">
+        <label>Action type:</label>
+        <select id="editActionType">
+          <option value="">(none)</option>
+          <option value="launch">Launch</option>
+          <option value="keys">Keys</option>
+          <option value="media">Media</option>
+          <option value="profile">Profile Switch</option>
+        </select>
+        <div id="actionParams"></div>
+        <button onclick="saveKey()">Save Key</button>
+        <div id="keyEditMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let profilesData = null;
+
+    async function fetchJSON(url, opts) {
+      const res = await fetch(url, opts);
+      return res.json();
+    }
+
+    async function loadStatus() {
+      const data = await fetchJSON('/api/status');
+      document.getElementById('connState').textContent = data.connection_state;
+      document.getElementById('activeProfile').textContent = data.active_profile;
+    }
+
+    async function loadProfiles() {
+      profilesData = await fetchJSON('/api/profiles');
+      const sel = document.getElementById('profileSelect');
+      sel.innerHTML = '';
+      for (const name of Object.keys(profilesData.profiles)) {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        if (name === profilesData.active_profile) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      renderKeys();
+      renderScreen();
+    }
+
+    function renderKeys() {
+      const grid = document.getElementById('keyGrid');
+      grid.innerHTML = '';
+      const active = profilesData.profiles[profilesData.active_profile];
+      const keys = active.keys || [];
+      for (let i = 0; i < 10; i++) {
+        const key = keys[i] || {};
+        const card = document.createElement('div');
+        card.className = 'key-card';
+        const imgSrc = key.image ? `/api/images/${key.image.replace('images/','')}` : '';
+        card.innerHTML = `
+          <img src="${imgSrc}" onerror="this.style.opacity=0.1">
+          <div class="label">${key.label || `Key ${i}`}</div>
+          <div class="action">${formatAction(key.action)}</div>
+        `;
+        grid.appendChild(card);
+      }
+    }
+
+    function renderScreen() {
+      const active = profilesData.profiles[profilesData.active_profile];
+      const screen = active.screen || {};
+      const img = document.getElementById('screenPreview');
+      if (screen.type === 'image' && screen.path) {
+        img.src = `/api/images/${screen.path.replace('images/','')}`;
+        img.style.display = 'block';
+      } else if (screen.type === 'widget_board') {
+        img.style.display = 'none';
+      }
+    }
+
+    function formatAction(action) {
+      if (!action) return '(no action)';
+      switch (action.type) {
+        case 'launch': return `Launch: ${action.path}`;
+        case 'keys': return `Keys: ${(action.sequence||[]).join(', ')}`;
+        case 'media': return `Media: ${action.key}`;
+        case 'profile': return `Profile: ${action.name}`;
+        default: return action.type;
+      }
+    }
+
+    async function activateProfile() {
+      const name = document.getElementById('profileSelect').value;
+      const res = await fetchJSON(`/api/profiles/${name}/activate`, {method: 'POST'});
+      if (res.ok) { loadStatus(); loadProfiles(); }
+      else { alert(res.error || 'Failed'); }
+    }
+
+    async function reloadProfiles() {
+      await loadProfiles();
+      loadStatus();
+    }
+
+    async function uploadImage() {
+      const fileInput = document.getElementById('uploadFile');
+      if (!fileInput.files[0]) { alert('Select a file first.'); return; }
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      const msgDiv = document.getElementById('uploadMsg');
+      msgDiv.textContent = 'Uploading...';
+      const res = await fetch('/api/upload-image', {method: 'POST', body: formData});
+      const data = await res.json();
+      if (data.ok) {
+        msgDiv.innerHTML = `<span class="success">Uploaded: ${data.path}</span>`;
+      } else {
+        msgDiv.innerHTML = `<span class="error">${data.error}</span>`;
+      }
+    }
+
+    document.getElementById('editActionType').addEventListener('change', function() {
+      const paramsDiv = document.getElementById('actionParams');
+      paramsDiv.innerHTML = '';
+      switch(this.value) {
+        case 'launch':
+          paramsDiv.innerHTML = '<label>Path:</label><input type="text" id="actionPath" placeholder="C:/.../app.exe"><label>Args:</label><input type="text" id="actionArgs" placeholder="--flag">';
+          break;
+        case 'keys':
+          paramsDiv.innerHTML = '<label>Sequence (comma-separated):</label><input type="text" id="actionSequence" placeholder="ctrl+shift+m">';
+          break;
+        case 'media':
+          paramsDiv.innerHTML = '<label>Key:</label><select id="actionMedia"><option value="play_pause">play_pause</option><option value="next">next</option><option value="prev">prev</option><option value="vol_up">vol_up</option><option value="vol_down">vol_down</option><option value="mute">mute</option></select>';
+          break;
+        case 'profile':
+          paramsDiv.innerHTML = '<label>Profile name:</label><input type="text" id="actionProfileName" placeholder="gaming">';
+          break;
+      }
+    });
+
+    async function saveKey() {
+      const idx = parseInt(document.getElementById('editKeyIndex').value);
+      const label = document.getElementById('editKeyLabel').value;
+      const image = document.getElementById('editKeyImage').value;
+      const actionType = document.getElementById('editActionType').value;
+      let action = null;
+      if (actionType) {
+        action = {type: actionType};
+        if (actionType === 'launch') { action.path = document.getElementById('actionPath').value; action.args = document.getElementById('actionArgs').value; }
+        else if (actionType === 'keys') { action.sequence = document.getElementById('actionSequence').value.split(',').map(s=>s.trim()); }
+        else if (actionType === 'media') { action.key = document.getElementById('actionMedia').value; }
+        else if (actionType === 'profile') { action.name = document.getElementById('actionProfileName').value; }
+      }
+      const active = profilesData.profiles[profilesData.active_profile];
+      if (!active.keys[idx]) active.keys[idx] = {};
+      active.keys[idx].label = label;
+      active.keys[idx].image = image || null;
+      active.keys[idx].action = action;
+
+      const res = await fetch('/api/profiles', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(profilesData),
+      });
+      const data = await res.json();
+      const msg = document.getElementById('keyEditMsg');
+      if (data.ok) { msg.innerHTML = '<span class="success">Saved!</span>'; loadProfiles(); }
+      else { msg.innerHTML = `<span class="error">${data.error}</span>`; }
+    }
+
+    loadStatus();
+    loadProfiles();
+    setInterval(loadStatus, 5000);
+  </script>
+</body>
+</html>

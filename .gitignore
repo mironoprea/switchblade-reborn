@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+captures/*.pcapng
+profiles/images/*.png
+profiles/images/*.jpg
+!profiles/images/.gitkeep
