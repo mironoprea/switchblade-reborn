@@ -174,7 +174,11 @@ class Daemon:
                     self._widget_timer = now
                     self._refresh_widgets()
 
-            time.sleep(0.05)
+            # FPS cap: sleep according to settings (default 15 fps)
+            settings = self.profiles_data.get("settings", {})
+            fps_cap = settings.get("fps_cap", 15)
+            sleep_time = max(1.0 / fps_cap, 0.01)
+            time.sleep(sleep_time)
 
         self._shutdown()
 
