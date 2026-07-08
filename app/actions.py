@@ -68,38 +68,57 @@ MEDIA_VK_MAP = {
 # Key name → virtual-key code map (subset; extended as needed)
 # ---------------------------------------------------------------------------
 
+# Virtual-key codes are just constants; define them on all platforms
+# so the map is usable for validation and testing without Windows.
+VK_CONTROL = 0x11
+VK_MENU = 0x12  # Alt
+VK_SHIFT = 0x10
+VK_LWIN = 0x5B
+VK_RETURN = 0x0D
+VK_TAB = 0x09
+VK_ESCAPE = 0x1B
+VK_SPACE = 0x20
+VK_BACK = 0x08
+VK_DELETE = 0x2E
+VK_HOME = 0x24
+VK_END = 0x23
+VK_UP = 0x26
+VK_DOWN = 0x28
+VK_LEFT = 0x25
+VK_RIGHT = 0x27
+VK_F1 = 0x70
+
 KEY_VK_MAP: dict[str, int] = {}
 
-if IS_WINDOWS and _HAS_WIN32:
-    # Letters a-z
-    for ch in range(ord("A"), ord("Z") + 1):
-        KEY_VK_MAP[chr(ch).lower()] = ch
-    # Digits 0-9
-    for d in range(10):
-        KEY_VK_MAP[str(d)] = ord("0") + d
-    # Modifiers
-    KEY_VK_MAP["ctrl"] = win32con.VK_CONTROL
-    KEY_VK_MAP["alt"] = win32con.VK_MENU
-    KEY_VK_MAP["shift"] = win32con.VK_SHIFT
-    KEY_VK_MAP["win"] = win32con.VK_LWIN
-    # Common keys
-    KEY_VK_MAP["enter"] = win32con.VK_RETURN
-    KEY_VK_MAP["return"] = win32con.VK_RETURN
-    KEY_VK_MAP["tab"] = win32con.VK_TAB
-    KEY_VK_MAP["esc"] = win32con.VK_ESCAPE
-    KEY_VK_MAP["escape"] = win32con.VK_ESCAPE
-    KEY_VK_MAP["space"] = win32con.VK_SPACE
-    KEY_VK_MAP["backspace"] = win32con.VK_BACK
-    KEY_VK_MAP["delete"] = win32con.VK_DELETE
-    KEY_VK_MAP["home"] = win32con.VK_HOME
-    KEY_VK_MAP["end"] = win32con.VK_END
-    KEY_VK_MAP["up"] = win32con.VK_UP
-    KEY_VK_MAP["down"] = win32con.VK_DOWN
-    KEY_VK_MAP["left"] = win32con.VK_LEFT
-    KEY_VK_MAP["right"] = win32con.VK_RIGHT
-    # F1-F12
-    for i in range(1, 13):
-        KEY_VK_MAP[f"f{i}"] = win32con.VK_F1 + i - 1
+# Letters a-z
+for ch in range(ord("A"), ord("Z") + 1):
+    KEY_VK_MAP[chr(ch).lower()] = ch
+# Digits 0-9
+for d in range(10):
+    KEY_VK_MAP[str(d)] = ord("0") + d
+# Modifiers
+KEY_VK_MAP["ctrl"] = VK_CONTROL
+KEY_VK_MAP["alt"] = VK_MENU
+KEY_VK_MAP["shift"] = VK_SHIFT
+KEY_VK_MAP["win"] = VK_LWIN
+# Common keys
+KEY_VK_MAP["enter"] = VK_RETURN
+KEY_VK_MAP["return"] = VK_RETURN
+KEY_VK_MAP["tab"] = VK_TAB
+KEY_VK_MAP["esc"] = VK_ESCAPE
+KEY_VK_MAP["escape"] = VK_ESCAPE
+KEY_VK_MAP["space"] = VK_SPACE
+KEY_VK_MAP["backspace"] = VK_BACK
+KEY_VK_MAP["delete"] = VK_DELETE
+KEY_VK_MAP["home"] = VK_HOME
+KEY_VK_MAP["end"] = VK_END
+KEY_VK_MAP["up"] = VK_UP
+KEY_VK_MAP["down"] = VK_DOWN
+KEY_VK_MAP["left"] = VK_LEFT
+KEY_VK_MAP["right"] = VK_RIGHT
+# F1-F12
+for i in range(1, 13):
+    KEY_VK_MAP[f"f{i}"] = VK_F1 + i - 1
 
 
 # ---------------------------------------------------------------------------
