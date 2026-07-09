@@ -106,3 +106,35 @@ def test_write_transfer_sends_single_bulk_transfer():
     assert len(dev.calls) == 1
     assert dev.calls[0][0][0] == 0x01
     assert dev.calls[0][0][1] == payload
+
+
+@pytest.mark.skipif(usb is None, reason="pyusb not installed")
+def test_device_present_uses_control_liveness_probe():
+    class _Dev:
+        def __init__(self):
+            self.calls = []
+
+        def ctrl_transfer(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return b"\x00\x00"
+
+    dev = _Dev()
+    link = _make_link(dev)
+
+    assert link._device_present()
+    assert len(dev.calls) == 1
+    assert dev.calls[0][0][:5] == (0x80, usb.REQ_GET_STATUS, 0, 0, 2)
+    assert dev.calls[0][1]["timeout"] == usb_link.PRESENCE_CHECK_TIMEOUT
+
+
+@pytest.mark.skipif(usb is None, reason="pyusb not installed")
+def test_poll_tears_down_when_liveness_probe_fails():
+    class _Dev:
+        def ctrl_transfer(self, *args, **kwargs):
+            raise usb.core.USBError("device gone")
+
+    link = _make_link(_Dev())
+    link._last_try = usb_link.time.time()
+
+    assert link.poll() == usb_link.DISCONNECTED
+    assert link.dev is None

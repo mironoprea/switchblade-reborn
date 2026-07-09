@@ -11,11 +11,12 @@ class _FakeInfo:
 
 
 class _FakeLink:
-    def __init__(self, info):
+    def __init__(self, info, *, ready=True):
         self.info = info
+        self._ready = ready
 
     def is_ready(self):
-        return True
+        return self._ready
 
     def read(self, *a, **k):
         raise AssertionError("read must not be called without an IN endpoint")
@@ -44,3 +45,48 @@ def test_run_paces_itself_when_no_vendor_in_endpoint(monkeypatch):
 
     assert polls == [True]
     assert sleeps == [0.01]
+
+
+def test_run_closes_hid_handles_when_link_disconnects(monkeypatch):
+    link = _FakeLink(_FakeInfo(in_endpoint=None), ready=False)
+    listener = InputListener(link, callback=lambda ev: None)
+    listener._hid_opened = True
+
+    closes = []
+
+    def fake_close_hid():
+        closes.append(True)
+        listener._hid_opened = False
+
+    def fake_sleep(seconds):
+        listener._stop.set()
+
+    monkeypatch.setattr(listener, "_close_hid", fake_close_hid)
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    listener._run()
+
+    assert closes == [True]
+
+
+def test_poll_hid_discards_failed_handles():
+    class _BadHid:
+        def __init__(self):
+            self.closed = False
+
+        def read(self, length):
+            raise OSError("stale handle")
+
+        def close(self):
+            self.closed = True
+
+    dev = _BadHid()
+    listener = InputListener(_FakeLink(_FakeInfo(in_endpoint=None)), callback=lambda ev: None)
+    listener._hid_opened = True
+    listener._hid_handles = [dev]
+
+    listener._poll_hid()
+
+    assert dev.closed
+    assert listener._hid_handles == []
+    assert not listener._hid_opened

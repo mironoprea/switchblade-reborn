@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 HID_CLASS = 0x03
 RETRY_INTERVAL = 2.0  # seconds between reconnection attempts
 USB_TIMEOUT = 5000   # ms
+PRESENCE_CHECK_INTERVAL = 1.0  # seconds between USB liveness probes
+PRESENCE_CHECK_TIMEOUT = 100   # ms
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +101,7 @@ class UsbLink:
         self.info: Optional[DeviceInfo] = None
         self.state = DISCONNECTED
         self._last_try = 0.0
+        self._last_presence_check = 0.0
         self._io_lock = threading.Lock()
         # Serializes teardown + state transitions across the main-loop thread
         # and the input-listener thread so one can't null out ``dev`` while the
@@ -356,8 +359,27 @@ class UsbLink:
         dev = self.dev
         if dev is None or usb is None:
             return False
+        now = time.time()
+        if now - self._last_presence_check < PRESENCE_CHECK_INTERVAL:
+            return True
+        self._last_presence_check = now
         try:
-            _ = dev.get_active_configuration()
+            if hasattr(dev, "ctrl_transfer"):
+                request_type = (
+                    usb.util.CTRL_IN
+                    | usb.util.CTRL_TYPE_STANDARD
+                    | usb.util.CTRL_RECIPIENT_DEVICE
+                )
+                dev.ctrl_transfer(
+                    request_type,
+                    usb.REQ_GET_STATUS,
+                    0,
+                    0,
+                    2,
+                    timeout=PRESENCE_CHECK_TIMEOUT,
+                )
+            else:
+                _ = dev.get_active_configuration()
             return True
         except Exception:
             return False

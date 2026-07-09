@@ -9,13 +9,13 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | all tests pass (124), profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass (136), profiles valid, libusb backend loads |
 | Code hardening (review) | Done | Transport/actions/web-API bugs fixed in PR #3; see HANDOFF.md §8 |
 | USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, blit OUT endpoint selection patched |
 | Protocol layer (blit, checksum) | Working | Header/checksum confirmed; screen blits use little-endian RGB565 and header+single-payload transfers |
 | Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |
 | Driver binding (Zadig) | Done | Interface 3 bound to WinUSB with Zadig |
-| Hardware bring-up | Partial | Main LCD renders; physical key events captured over HID |
+| Hardware bring-up | Partial | Main LCD renders; physical key events captured over HID; hotplug reconnect verified |
 | Key image addressing | Unknown | y=480 hypothesis rejected; daemon key-image blits disabled |
 | Key event format | Working | Physical LCD keys report over HID as `04 50`..`04 59`, release `04 00` |
 | Brightness control | Unknown | Not in FxChiP; may need Razer HID feature report |
@@ -53,6 +53,9 @@ python -m app.cli status              # Show connection state and active profile
 python -m app.cli install-autostart    # Install Windows Task Scheduler autostart
 python -m app.cli uninstall-autostart  # Remove the autostart entry
 python tools\listen_hid.py             # Diagnostic: print raw HID reports
+python tools\adb_photo.py --output captures\phone\keyboard.jpg
+python tools\capture_usbpcap.py --name 02-set-key-image  # Capture USBPcap roots
+python tools\analyze_capture.py captures\02-set-key-image-usbpcap6.pcap
 ```
 
 ## Features
@@ -110,8 +113,8 @@ Widget types: `clock`, `cpu_ram`, `media_now_playing`.
 ## Driver Setup (Zadig)
 
 The Switchblade vendor interface (**interface 3**, class 0xFF) must be bound to
-WinUSB so pyusb can access it. This is currently the **blocking step** — the
-factory Razer driver (`rzhnet.inf`) owns the interface and must be replaced.
+WinUSB so pyusb can access it. On the current test machine this is already done
+with Zadig, and Device Manager shows MI_03 using the WinUSB service.
 
 1. Fully exit Razer Synapse and kill `Rz*` processes.
 2. Download [Zadig](https://zadig.akeo.ie/) and run as Administrator.

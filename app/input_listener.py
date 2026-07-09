@@ -69,6 +69,8 @@ class InputListener:
     def _run(self) -> None:
         while not self._stop.is_set():
             if not self._link.is_ready():
+                if self._hid_opened:
+                    self._close_hid()
                 time.sleep(0.1)
                 continue
             info = self._link.info
@@ -128,6 +130,7 @@ class InputListener:
                 data = bytes(dev.read(64))
             except OSError as exc:
                 logger.debug("HID read failed: %s", exc)
+                self._discard_hid_handle(dev)
                 continue
             if not data:
                 continue
@@ -138,6 +141,9 @@ class InputListener:
                 continue
             self._hid_pressed_key = event.key_index if event.pressed else None
             self._dispatch(event)
+
+        if self._hid_opened and not self._hid_handles:
+            self._hid_opened = False
 
     def _open_hid(self) -> None:
         self._hid_opened = True
@@ -168,6 +174,16 @@ class InputListener:
         self._hid_handles = []
         self._hid_opened = False
         self._hid_pressed_key = None
+
+    def _discard_hid_handle(self, dev) -> None:
+        try:
+            dev.close()
+        except OSError:
+            pass
+        try:
+            self._hid_handles.remove(dev)
+        except ValueError:
+            pass
 
 
 def _is_keyboard_collection(device_info: dict) -> bool:

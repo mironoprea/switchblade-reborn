@@ -1,11 +1,16 @@
 __pycache__/
 *.pyc
 *.pyo
+*.log
 venv/
 .venv/
 *.egg-info/
 .pytest_cache/
+captures/*.pcap
 captures/*.pcapng
+captures/*.out
+captures/*.err
+captures/phone/
 profiles/images/*.png
 profiles/images/*.jpg
 !profiles/images/.gitkeep

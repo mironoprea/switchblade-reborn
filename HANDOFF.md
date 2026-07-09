@@ -15,7 +15,7 @@
 - Created a Python venv: python -m venv venv.
 - Installed all dependencies from requirements.txt: pyusb 1.3.1, libusb-package 1.0.30.0, Pillow 12.3.0, hidapi 0.15.0, flask 3.1.3, psutil 7.2.2, pywin32 312, numpy 2.5.1.
 - Installed pytest 9.1.1.
-- Ran the full test suite: current baseline is 124/124 tests pass.
+- Ran the full test suite: current baseline is 136/136 tests pass.
 - Validated profiles/profiles.json: valid.
 
 ### 1.2 Patches Applied (3 files)
@@ -87,7 +87,7 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 124 tests pass.
+- The protocol layer, renderer, profile validation, web UI, and all 136 tests pass.
 - The WinUSB driver bind is complete; remaining work is physical key-image addressing and higher-level key profiles.
 
 ---
@@ -180,7 +180,8 @@ Diagnostic tools:
 live hardware hardening details).
 
 Working:
-- Repo builds, all dependencies install, tests pass (124 total after screen-transfer and HID parsing fixes).
+- Repo builds, all dependencies install, tests pass (136 total after screen-transfer,
+  HID parsing, hotplug, HID reconnect, capture-tooling, and phone-camera fixes).
 - Device is detected, vendor interface (3) correctly identified with bulk OUT endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
@@ -197,12 +198,13 @@ IMPLEMENTATION_PLAN Sections A-E, H.1 completed (PR #2 merged to master):
 
 Blocked on hardware (Sections F, G, H.2/H.3, I):
 - Interface 3 is bound to WinUSB and pyusb can claim it.
-- Hardware bring-up: main LCD renders, physical key events parse over HID, full daemon reaches READY and renders the screen.
+- Hardware bring-up: main LCD renders, physical key events parse over HID, full daemon
+  reaches READY, renders the screen, and reconnects after unplug/replug.
 - Key image addressing still [UNKNOWN] — FxChiP only does touchpad blitting.
 - Physical key event format is [CONFIRMED] over HID (`04 50`..`04 59`, release `04 00`).
 - Brightness control still [UNKNOWN] — not present in FxChiP source.
-- USB captures (Section H.2) may still be needed for key addressing + key events, but
-  must be done BEFORE Zadig binding (while Razer driver is still active).
+- USB captures (Section H.2) may still be needed for key-image addressing and
+  brightness, but must be done BEFORE Zadig binding (while Razer driver is still active).
 
 ---
 
@@ -216,7 +218,8 @@ means the code you run after Zadig is now correct where it previously wasn't.**
 
 **Test baseline after PR #3 was 110 tests: 108 pass + 2 `pyusb`-gated skips** (the
 2 skips run and pass on CI, which now installs `requirements.txt`). Current local
-baseline after screen-transfer and HID parsing fixes is 124 passing tests.
+baseline after screen-transfer, HID parsing, hotplug, HID reconnect, capture
+tooling, and phone-camera fixes is 136 passing tests.
 
 ### Highest-impact fixes (these directly affect bring-up)
 - **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
@@ -278,3 +281,56 @@ via Section G/H on real hardware as originally planned.
   switching to little-endian RGB565 and sending blits as a 12-byte header transfer
   followed by one complete payload transfer. It also confirmed the old key-image
   address hypothesis writes into the main touch LCD, not onto physical keys.
+
+---
+
+## 10. Hotplug + HID Reconnect Hardening (2026-07-09)
+
+- Live daemon testing initially missed an unplug/replug: pyusb's cached
+  `get_active_configuration()` path still returned successfully after the device
+  was physically replugged while the static profile was idle.
+- `UsbLink._device_present()` now performs a throttled standard USB `GET_STATUS`
+  control request. On live hardware the daemon logged disconnect at 17:04:35,
+  retried during Windows re-enumeration, then returned to READY at 17:04:45 and
+  rendered the active profile.
+- `InputListener` now closes HID handles while the USB link is disconnected and
+  discards stale HID handles that fail reads, so LCD-key input can recover after
+  hotplug.
+- Live daemon key test after the patch confirmed physical LCD key events:
+  `key 0 down` and `key 0 up`.
+- Added regression tests for USB liveness probing, hotplug teardown, HID handle
+  closure on disconnect, and stale HID handle discard. Current baseline:
+  `128 passed` at that point.
+
+---
+
+## 11. USBPcap Capture Preparation (2026-07-09)
+
+- USBPcap 1.5.4.0 was installed via winget. The installer reported that the
+  USBPcap UpperFilter entry is present, but no filter control devices are
+  available until reboot. Attempting to restart USB devices in-place failed with
+  `DIF_PROPERTYCHANGE`; the USBPcap console explicitly says: "Please reboot."
+- Added `tools/capture_usbpcap.py` to start USBPcapCMD captures across roots 1-8
+  in parallel, avoiding manual root-hub selection.
+- Added `tools/analyze_capture.py`, which uses tshark to scan captured USB
+  payloads for valid Switchblade blit headers (`opcode=0x0001`, big-endian
+  coordinates, XOR checksum) and summarize rectangles/payload lengths.
+- Added tests for both tools. Baseline at this step: `133 passed`.
+- Installed official Google Android SDK Platform-Tools via winget. ADB detects the
+  Motorola as `moto g04s` (`ZY22KG5S55`).
+- Added `tools/adb_photo.py` to wake the phone, open the camera, trigger the
+  shutter, and pull the newest image from `/sdcard/DCIM/Camera`.
+- Verified the phone-camera workflow live. The pulled image shows the keyboard
+  framed with all 10 separate LCD keys and the main LCD visible; the main LCD is
+  rendering the "Switchblade Reborn" default screen. Current baseline:
+  `136 passed`.
+- Next sequence after reboot:
+  1. Confirm USBPcap capture works by capturing our own `tools\blit_test.py`
+     screen blit and analyzing it.
+  2. Temporarily restore MI_03 from WinUSB (`oem1.inf`, libwdi) to the Razer
+     driver (`oem16.inf`, `rzhnet.inf`), keeping HID interfaces untouched.
+  3. Start Synapse/SwitchBlade, capture assigning a distinct image to one
+     physical LCD key, then analyze the capture for the real key-image rectangle
+     or alternate transfer format.
+  4. Re-bind MI_03 to WinUSB with Zadig and port the discovered addressing into
+     the daemon.

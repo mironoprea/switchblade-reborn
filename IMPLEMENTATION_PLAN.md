@@ -27,8 +27,10 @@
 >   Everything before that is complete; the forward plan is **H.2 if possible →
 >   F → G → H.3 → I**.
 > - Test baseline after PR #3 was **110 tests (108 pass, 2 `pyusb`-gated skips)**,
->   not 104. A later live hardware-probe hardening pass brings the local baseline
->   to **117 passing tests** on the current Windows local environment.
+>   not 104. A later live hardware-probe hardening pass plus hotplug/HID
+>   reconnect hardening, capture-tooling preparation, and ADB phone-camera
+>   helper bring the local baseline to **136 passing tests** on the current
+>   Windows local environment.
 >
 > Sections A–E below are kept for history; read them for context, not as a to-do.
 
@@ -46,12 +48,12 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2, PR #3, and PR #5 merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 124 tests pass, profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 136 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | — | Live endpoint/HID hardening + Fable review blocker | **Done** — PR #5; no vendor IN endpoint, HID diagnostic added, InputListener no-IN busy-spin fixed |
 | F | Bind WinUSB via Zadig | **Done** — interface 3 / MI_03 bound to WinUSB via Zadig |
-| G | Hardware bring-up (blit test, keys) | **Partial** — main LCD renders, HID key events captured, physical key-image addressing unresolved |
-| H.2 | USB captures (if needed) | **Not started** — must be done before Section F |
+| G | Hardware bring-up (blit test, keys) | **Partial** — main LCD renders, HID key events captured, hotplug reconnect verified, physical key-image addressing unresolved |
+| H.2 | USB captures (if needed) | **Prepared** — USBPcap installed and capture/analyze tools added; reboot required before filter devices become available |
 | H.3 | Key-event format resolution | **Done for physical keys** — HID reports `04 50`..`04 59`, release `04 00`; key-image addressing still unresolved |
 | I | Final acceptance checklist | **Not started** — requires all above |
 
@@ -541,9 +543,9 @@ The keyboard is "actually running" when all of these pass:
       configured action.
 - [x] `python -m app.cli run` reaches `READY`, renders the active profile's screen, and the
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
-- [ ] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
+- [x] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [x] All tests still pass (`python -m pytest tests/ -q`; currently 124 pass),
+- [x] All tests still pass (`python -m pytest tests/ -q`; currently 136 pass),
       plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
       `[CONFIRMED]` or `[PORTED …]`.
