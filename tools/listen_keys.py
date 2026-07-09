@@ -31,7 +31,7 @@ def main() -> int:
     try:
         while True:
             try:
-                data = link.read(length=64, timeout=500)
+                data = link.read(length=512, timeout=500)
             except ConnectionError:
                 print("Device disconnected.")
                 break

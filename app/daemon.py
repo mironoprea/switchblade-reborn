@@ -162,6 +162,7 @@ class Daemon:
                 break
 
             if state == INITIALIZING:
+                self._initialize_device()
                 self.link.mark_ready()
 
             if state == READY and not self._initialized_device:
@@ -191,6 +192,20 @@ class Daemon:
         logger.info("Device ready. Rendering active profile.")
         self.renderer.force_full_redraw()
         self._render_full_profile()
+
+    def _initialize_device(self) -> None:
+        """Send the device init/mode-switch sequence, if any.
+
+        [PORTED from FxChiP/rzswitchblade] No init sequence is needed - the
+        reference C library claims the interface and blits immediately. This hook
+        exists as a no-op placeholder. If hardware testing (with WinUSB bound
+        instead of the Linux kernel driver detach path) reveals an init sequence
+        is needed, fill it in here, e.g.:
+
+            for packet in protocol.INIT_SEQUENCE:
+                self.link.write(packet)
+        """
+        return
 
     def _render_full_profile(self) -> None:
         """Render screen + all key images for the current profile."""

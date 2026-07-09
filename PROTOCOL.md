@@ -6,24 +6,32 @@ source.  Update this file when hardware captures reveal new information.
 
 ## Device map
 
-**[SEED]** Based on the Razer Blade (PID 0x0116) — verify on DeathStalker with
-`tools/enumerate.py` or USB Device Tree Viewer.
+**[CONFIRMED]** on real hardware (see HANDOFF.md). Vendor interface = interface 3, class 0xFF.
 
 | Interface | Class | Subclass | Protocol | Endpoints | Purpose |
 |-----------|-------|----------|----------|-----------|---------|
-| 0 | 0x03 (HID) | — | Keyboard | Interrupt IN/OUT | Standard keyboard |
-| 1 | 0x03 (HID) | — | — | Interrupt IN/OUT | HID (mouse/media?) |
-| 2 | 0xFF (Vendor) | — | — | Bulk OUT 0x01, Bulk IN 0x02 | Switchblade UI |
+| 0 | 0x03 (HID) | 0x01 | 0x02 | Interrupt IN 0x81 (8B) | Standard keyboard |
+| 1 | 0x03 (HID) | 0x00 | 0x01 | Interrupt IN 0x82 (16B) | HID media/consumer |
+| 2 | 0x03 (HID) | 0x01 | 0x01 | Interrupt IN 0x83 (8B) | HID system control |
+| 3 | 0xFF (Vendor) | 0xF0 | 0x00 | Bulk OUT 0x01 (512), Bulk IN 0x02 (512) | Switchblade UI |
 
 The vendor interface (class 0xFF) must be bound to WinUSB via Zadig.
 HID interfaces (class 0x03) must NOT be touched.
 
 ## Blit packet format
 
-**[SEED]** Derived from rzswitchblade C sources (GPL-2.0, clean-room Python reimplementation).
+**[PORTED from FxChiP/rzswitchblade]** Header format, opcode, and checksum confirmed
+against the C source (`rzsblit_proto.c`, `rzsblit_sync.c`).
 
 A blit consists of a 12-byte header followed by RGB565 pixel data, sent as
 consecutive bulk OUT transfers to endpoint 0x01.
+
+**[PORTED from FxChiP/rzswitchblade]** In the original C library, the 12-byte header
+and the pixel payload are sent as **two separate** `libusb_bulk_transfer` calls (header
+first, then pixel data). The current Python implementation concatenates them into a
+single `write()` call, which is internally chunked to `max_out_packet` (512 bytes).
+If blits fail on hardware, try sending the header and payload as separate transfers
+(see IMPLEMENTATION_PLAN.md Section G.5).
 
 ### Header (12 bytes)
 
@@ -91,12 +99,19 @@ Header bytes:
 ## Key image addressing
 
 **[UNKNOWN]** The exact addressing of dynamic key images is not yet confirmed.
+FxChiP/rzswitchblade only implements touchpad blitting (`rzswitchblade_blit_tp_sync`);
+no key-image addressing code exists in that library.
+
 Two hypotheses:
 
 1. Keys are an extended region of the same virtual framebuffer, starting at
    y = 480 (below the screen).  Each key is 115×115 pixels, laid out
    horizontally: key 0 at x=0, key 1 at x=115, etc.
 2. A different opcode or endpoint is used for key images.
+
+**[PORTED from FxChiP/rzswitchblade]** The FxChiP README states each "macro button"
+can hold a **116×116** icon (not 115×115). The current code uses 115; if key
+images appear clipped or offset, try `KEY_IMAGE_SIZE = 116`.
 
 A USB capture of Synapse assigning key images resolves this.
 
@@ -114,8 +129,12 @@ hidapi instead.
 
 ## Init sequence
 
-**[UNKNOWN]** Whether a mode-switch/init packet is needed when the device
-is first connected.  Captures of Synapse's attach sequence should reveal this.
+**[PORTED from FxChiP/rzswitchblade]** No init/mode-switch sequence is needed.
+The FxChiP C library opens the device, detaches the kernel driver (Linux), claims
+the interface, and immediately blits. No control transfers or magic packets are sent
+before the first blit. The `Daemon._initialize_device()` hook exists as a no-op
+placeholder; if hardware testing reveals an init sequence is needed (e.g. when using
+WinUSB instead of the Linux kernel driver detach path), fill it in there.
 
 ## Brightness
 
