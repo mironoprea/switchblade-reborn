@@ -11,6 +11,7 @@ Only this module touches pyusb.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -20,6 +21,12 @@ try:
     import usb.util
 except ImportError:
     usb = None
+
+try:
+    import libusb_package
+    _BACKEND = libusb_package.get_libusb1_backend()
+except Exception:
+    _BACKEND = None
 
 from .protocol import VENDOR_VID, VENDOR_PID, BULK_OUT_EP, BULK_IN_EP
 
@@ -88,6 +95,7 @@ class UsbLink:
         self.info: Optional[DeviceInfo] = None
         self.state = DISCONNECTED
         self._last_try = 0.0
+        self._io_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -120,19 +128,20 @@ class UsbLink:
         if self.dev is None or self.info is None:
             raise ConnectionError("No device handle")
         try:
-            total = 0
-            offset = 0
-            chunk = self.info.max_out_packet
-            while offset < len(data):
-                end = min(offset + chunk, len(data))
-                written = self.dev.write(
-                    self.info.out_endpoint,
-                    data[offset:end],
-                    timeout=USB_TIMEOUT,
-                )
-                total += written
-                offset = end
-            return total
+            with self._io_lock:
+                total = 0
+                offset = 0
+                chunk = self.info.max_out_packet
+                while offset < len(data):
+                    end = min(offset + chunk, len(data))
+                    written = self.dev.write(
+                        self.info.out_endpoint,
+                        data[offset:end],
+                        timeout=USB_TIMEOUT,
+                    )
+                    total += written
+                    offset = end
+                return total
         except Exception as exc:
             if usb is not None and isinstance(exc, usb.core.USBError):
                 logger.error("USB write error: %s", exc)
@@ -148,12 +157,13 @@ class UsbLink:
         if self.dev is None or self.info is None:
             raise ConnectionError("No device handle")
         try:
-            data = self.dev.read(
-                self.info.in_endpoint,
-                length,
-                timeout=timeout,
-            )
-            return bytes(data)
+            with self._io_lock:
+                data = self.dev.read(
+                    self.info.in_endpoint,
+                    length,
+                    timeout=timeout,
+                )
+                return bytes(data)
         except Exception as exc:
             if usb is not None and isinstance(exc, usb.core.USBError):
                 if "timeout" in str(exc).lower():
@@ -187,7 +197,7 @@ class UsbLink:
         self.state = CLAIMING
         logger.info("Device state: CLAIMING")
         try:
-            self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid)
+            self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid, backend=_BACKEND)
             if self.dev is None:
                 logger.debug("Device not found (VID=%04x PID=%04x)", self.vid, self.pid)
                 self.state = DISCONNECTED

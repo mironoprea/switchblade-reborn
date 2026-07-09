@@ -57,7 +57,7 @@ class InputListener:
                 time.sleep(0.1)
                 continue
             try:
-                data = self._link.read(length=64, timeout=self._read_timeout)
+                data = self._link.read(length=512, timeout=self._read_timeout)
             except ConnectionError:
                 time.sleep(0.5)
                 continue
