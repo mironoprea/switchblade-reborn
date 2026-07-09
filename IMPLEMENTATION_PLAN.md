@@ -46,21 +46,21 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2, PR #3, and PR #5 merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 117 tests pass, profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 124 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | — | Live endpoint/HID hardening + Fable review blocker | **Done** — PR #5; no vendor IN endpoint, HID diagnostic added, InputListener no-IN busy-spin fixed |
-| F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware **← fresh agent starts here** |
-| G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |
+| F | Bind WinUSB via Zadig | **Done** — interface 3 / MI_03 bound to WinUSB via Zadig |
+| G | Hardware bring-up (blit test, keys) | **Partial** — main LCD renders, HID key events captured, physical key-image addressing unresolved |
 | H.2 | USB captures (if needed) | **Not started** — must be done before Section F |
-| H.3 | Key-event format resolution | **Not started** — requires hardware or captures |
+| H.3 | Key-event format resolution | **Done for physical keys** — HID reports `04 50`..`04 59`, release `04 00`; key-image addressing still unresolved |
 | I | Final acceptance checklist | **Not started** — requires all above |
 
 **FxChiP findings (H.1):** Header format (6 × big-endian uint16, opcode 0x0001, XOR
 checksum) confirmed matching. Rectangle is inclusive. No init sequence needed (claim
 + blit immediately). Key size may be 116×116 (README says 116, code uses 115). FxChiP
-sends header and payload as **two separate** bulk transfers; our code concatenates
-them (noted as diagnostic fallback in PROTOCOL.md and Section G.5). Key-image
-addressing and brightness are not in FxChiP — remain [UNKNOWN].
+sends header and payload as **two separate** bulk transfers; hardware testing
+confirmed this transfer shape is required. Key-image addressing and brightness are
+not in FxChiP — remain [UNKNOWN].
 
 ---
 
@@ -393,8 +393,9 @@ Do these in order. Stop and diagnose at the first failure.
    ```powershell
    python tools\blit_test.py profiles\images\bg.png
    ```
-   - If the image appears on the trackpad LCD: the blit header, checksum, RGB565, and endpoint are all
-     correct. **This is the milestone that proves the protocol.**
+   - **Actual 2026-07-09 result:** the image appears on the trackpad LCD with correct colors after sending
+     little-endian RGB565 as header transfer + one complete payload transfer. **This proves the screen
+     protocol.**
    - If nothing appears: try `--endian little`:
      ```powershell
      python tools\blit_test.py profiles\images\bg.png --endian little
@@ -408,8 +409,9 @@ Do these in order. Stop and diagnose at the first failure.
    python -c "from app.usb_link import UsbLink; from app import protocol; from app.renderer import render_key_image_to_rgb565; l=UsbLink(); [l.poll() for _ in range(10)]; l.mark_ready(); l.write(protocol.build_key_blit(0, render_key_image_to_rgb565('profiles/images/key0.png'))); l.disconnect()"
    ```
    - If key 0's LCD shows the image: the `y=480` / 115×115 addressing hypothesis is correct.
-   - If the key image appears in the wrong place, wrong key, or corrupts the main screen: the addressing is
-     wrong — resolve via Section H.2 (key-image capture) or H.1 (FxChiP source).
+   - **Actual 2026-07-09 result:** the image appeared on the main touch LCD, not on a physical key. The
+     `y=480` hypothesis is rejected and daemon key-image blits are disabled until key-image captures resolve
+     the real addressing.
 4. **Key events** — run the listener and press the 10 LCD keys:
    ```powershell
    python tools\listen_keys.py
@@ -418,17 +420,16 @@ Do these in order. Stop and diagnose at the first failure.
      confirm/fix `parse_key_event`.
    - If nothing prints on any LCD key press: key events are almost certainly on the **HID** interfaces, not
      the vendor endpoint (see 2.3). Go to Section H.3, HID path.
-5. **Chunking fallback (only if G.2 fails):** In `app/usb_link.py`, `write()` currently loops sending
-   `max_out_packet` (512-byte) chunks. Some devices want the entire logical blit as a single bulk transfer.
-   As a diagnostic, temporarily replace the chunk loop with a single `self.dev.write(self.info.out_endpoint,
-   data, timeout=USB_TIMEOUT)` and retry G.2. If that renders, keep the single-write form. Do not make this
-   change unless chunked writes fail.
+5. **Chunking result:** chunking the pixel payload into 512-byte writes completed at the USB level but did
+   not update the LCD reliably. The working implementation sends the 12-byte header as one transfer and the
+   entire payload as one transfer.
 6. **Full daemon:**
    ```powershell
    python -m app.cli run
    ```
    Expect logs: `CLAIMING` → `INITIALIZING` → `READY` → `Device ready. Rendering active profile.` The web
-   UI at http://127.0.0.1:8377 should load. The active profile's screen and key images should appear.
+   UI at http://127.0.0.1:8377 should load. The active profile's screen should appear. Physical key images
+   are intentionally not blitted until their addressing is resolved.
 
 ---
 
@@ -533,16 +534,16 @@ files to `captures/` only if the user wants them retained (they can be large; as
 
 The keyboard is "actually running" when all of these pass:
 
-- [ ] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk OUT EPs 0x01/0x02 (WinUSB bound).
-- [ ] `python tools\blit_test.py <image>` renders the image on the trackpad LCD with correct colors.
-- [ ] A key-image blit renders on the correct dynamic key at the correct position.
-- [ ] Pressing an LCD key produces a parsed `KeyEvent` (via vendor endpoint or HID per H.3) and triggers its
+- [x] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk OUT EPs 0x01/0x02 (WinUSB bound).
+- [x] `python tools\blit_test.py <image>` renders the image on the trackpad LCD with correct colors.
+- [ ] A key-image blit renders on the correct dynamic key at the correct position. Current y=480 hypothesis is rejected.
+- [x] Pressing an LCD key produces a parsed `KeyEvent` (via HID per H.3) and triggers its
       configured action.
-- [ ] `python -m app.cli run` reaches `READY`, renders the active profile's screen + all key images, and the
+- [x] `python -m app.cli run` reaches `READY`, renders the active profile's screen, and the
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
 - [ ] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [x] All tests still pass (`python -m pytest tests/ -q`; currently 117 pass),
+- [x] All tests still pass (`python -m pytest tests/ -q`; currently 124 pass),
       plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
       `[CONFIRMED]` or `[PORTED …]`.

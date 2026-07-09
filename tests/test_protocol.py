@@ -131,3 +131,29 @@ class TestKeyEvent:
         event = protocol.parse_key_event(data)
         assert event is not None
         assert event.key_index == 3
+
+
+class TestHidKeyEvent:
+    def test_parse_hid_key_down(self):
+        event = protocol.parse_hid_key_event(bytes.fromhex("0450000000000000"))
+        assert event is not None
+        assert event.key_index == 0
+        assert event.pressed is True
+
+    def test_parse_hid_key_9_down(self):
+        event = protocol.parse_hid_key_event(bytes.fromhex("0459000000000000"))
+        assert event is not None
+        assert event.key_index == 9
+        assert event.pressed is True
+
+    def test_parse_hid_release_uses_previous_key(self):
+        event = protocol.parse_hid_key_event(bytes.fromhex("0400000000000000"), pressed_key=3)
+        assert event is not None
+        assert event.key_index == 3
+        assert event.pressed is False
+
+    def test_parse_hid_release_without_previous_key_is_unknown(self):
+        assert protocol.parse_hid_key_event(bytes.fromhex("0400000000000000")) is None
+
+    def test_parse_hid_ignores_unrelated_report(self):
+        assert protocol.parse_hid_key_event(bytes.fromhex("05071000f6020d00")) is None

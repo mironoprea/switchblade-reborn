@@ -87,3 +87,22 @@ def test_read_returns_empty_when_no_vendor_in_endpoint():
     link.info.in_endpoint = None
 
     assert link.read(length=64, timeout=100) == b""
+
+
+def test_write_transfer_sends_single_bulk_transfer():
+    class _Dev:
+        def __init__(self):
+            self.calls = []
+
+        def write(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return len(args[1])
+
+    dev = _Dev()
+    link = _make_link(dev)
+    payload = b"x" * 1500
+
+    assert link.write_transfer(payload) == len(payload)
+    assert len(dev.calls) == 1
+    assert dev.calls[0][0][0] == 0x01
+    assert dev.calls[0][0][1] == payload

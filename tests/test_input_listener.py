@@ -28,13 +28,19 @@ def test_run_paces_itself_when_no_vendor_in_endpoint(monkeypatch):
     listener = InputListener(link, callback=lambda ev: None)
 
     sleeps = []
+    polls = []
 
     def fake_sleep(seconds):
         sleeps.append(seconds)
         listener._stop.set()  # terminate the loop after the first pass
 
+    def fake_poll_hid():
+        polls.append(True)
+
+    monkeypatch.setattr(listener, "_poll_hid", fake_poll_hid)
     monkeypatch.setattr(time, "sleep", fake_sleep)
 
     listener._run()  # would spin forever (AssertionError on read) if unguarded
 
-    assert sleeps == [0.5]
+    assert polls == [True]
+    assert sleeps == [0.01]

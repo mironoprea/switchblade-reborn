@@ -130,6 +130,13 @@ class UsbLink:
 
     def write(self, data: bytes) -> int:
         """Write data to the bulk OUT endpoint.  Returns bytes written."""
+        return self._write(data, chunk=True)
+
+    def write_transfer(self, data: bytes) -> int:
+        """Write data as one bulk OUT transfer.  Returns bytes written."""
+        return self._write(data, chunk=False)
+
+    def _write(self, data: bytes, *, chunk: bool) -> int:
         if self.state not in (READY, INITIALIZING):
             raise ConnectionError(f"Device not ready (state={self.state})")
         # Snapshot the handle so a concurrent teardown can't null it mid-use.
@@ -139,11 +146,17 @@ class UsbLink:
             raise ConnectionError("No device handle")
         try:
             with self._io_lock:
+                if not chunk:
+                    return dev.write(
+                        info.out_endpoint,
+                        data,
+                        timeout=USB_TIMEOUT,
+                    )
                 total = 0
                 offset = 0
-                chunk = info.max_out_packet
+                chunk_size = info.max_out_packet
                 while offset < len(data):
-                    end = min(offset + chunk, len(data))
+                    end = min(offset + chunk_size, len(data))
                     written = dev.write(
                         info.out_endpoint,
                         data[offset:end],

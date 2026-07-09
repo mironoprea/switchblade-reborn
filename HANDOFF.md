@@ -15,7 +15,7 @@
 - Created a Python venv: python -m venv venv.
 - Installed all dependencies from requirements.txt: pyusb 1.3.1, libusb-package 1.0.30.0, Pillow 12.3.0, hidapi 0.15.0, flask 3.1.3, psutil 7.2.2, pywin32 312, numpy 2.5.1.
 - Installed pytest 9.1.1.
-- Ran the full test suite: current baseline is 117/117 tests pass.
+- Ran the full test suite: current baseline is 124/124 tests pass.
 - Validated profiles/profiles.json: valid.
 
 ### 1.2 Patches Applied (3 files)
@@ -87,8 +87,8 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 117 tests pass.
-- The only thing preventing the keyboard from working is the driver binding on interface 3.
+- The protocol layer, renderer, profile validation, web UI, and all 124 tests pass.
+- The WinUSB driver bind is complete; remaining work is physical key-image addressing and higher-level key profiles.
 
 ---
 
@@ -134,16 +134,23 @@ These have NOT been tested on hardware yet (blocked by the driver issue):
 FxChiP/rzswitchblade source was mined (Section H.1 of IMPLEMENTATION_PLAN). The C library opens the device, detaches the kernel driver (Linux), claims the interface, and immediately blits — no init/mode-switch packet is sent. A `Daemon._initialize_device()` no-op hook has been added so that if hardware testing with WinUSB reveals an init sequence is needed, there is a place to add it. PROTOCOL.md updated to [PORTED].
 
 ### 5.2 Key Image Addressing [UNKNOWN]
-The code assumes keys are laid out at y=480 (below the screen) in a virtual framebuffer, each 115x115 pixels. PROTOCOL.md says this is a hypothesis — a different opcode or addressing scheme may be needed. Needs a USB capture of Synapse assigning key images.
+The old code assumed key images were laid out at y=480 (below the screen) in a
+virtual framebuffer, each 115x115 pixels. Hardware testing proved that hypothesis
+wrong: blitting key 0 places the image on the main touch LCD, not on a physical
+LCD key. Physical key-image blits are disabled in the daemon until a capture
+reveals the real addressing path. Needs a USB capture of Synapse assigning key
+images.
 
-### 5.3 Key Event Format [UNKNOWN]
-Live enumeration reports no vendor bulk IN endpoint on interface 3, so key events
-likely arrive on one of the HID interrupt IN endpoints. parse_key_event() still
-implements two legacy raw-byte hypotheses (1-indexed byte + flag, or bitmask),
-but the actual format needs a capture of pressing the LCD keys while Synapse runs.
+### 5.3 Physical LCD Key Event Format [CONFIRMED]
+Physical LCD-key presses arrive on HID collection `MI_01&Col04`, not on the vendor
+interface. Captured reports are `04 50` through `04 59` for keys 0 through 9 down,
+and `04 00` for release of the previously pressed key. These are physical key
+events only; they do not imply anything about key-image blit addressing.
 
-### 5.4 Pixel Endian
-RGB565 byte order defaults to big-endian. If colors appear swapped on hardware, switch to little-endian via the endian parameter.
+### 5.4 Pixel Endian [CONFIRMED]
+RGB565 byte order must be little-endian on hardware. Big-endian payloads produced
+swapped/wrong colors; little-endian renders the Switchblade Reborn background
+correctly.
 
 ### 5.5 No Profile Images
 profiles/images/ has placeholder PNGs (bg.png, key0.png to key9.png) but they may be dummy/test images. Real images will be needed for a usable setup.
@@ -173,7 +180,7 @@ Diagnostic tools:
 live hardware hardening details).
 
 Working:
-- Repo builds, all dependencies install, tests pass (117 total after Fable-reviewed InputListener pacing fix).
+- Repo builds, all dependencies install, tests pass (124 total after screen-transfer and HID parsing fixes).
 - Device is detected, vendor interface (3) correctly identified with bulk OUT endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
@@ -189,11 +196,10 @@ IMPLEMENTATION_PLAN Sections A-E, H.1 completed (PR #2 merged to master):
 - Added threading.Lock to UsbLink.write() and read() for thread-safety (C.5).
 
 Blocked on hardware (Sections F, G, H.2/H.3, I):
-- Interface 3 has the Razer driver (rzhnet.inf / oem16.inf), not WinUSB. pyusb cannot
-  claim it. Need Zadig (Section F) to bind WinUSB to interface 3 only.
-- After Zadig: hardware bring-up (Section G) — blit test, key events, full daemon run.
+- Interface 3 is bound to WinUSB and pyusb can claim it.
+- Hardware bring-up: main LCD renders, physical key events parse over HID, full daemon reaches READY and renders the screen.
 - Key image addressing still [UNKNOWN] — FxChiP only does touchpad blitting.
-- Key event format still [UNKNOWN] — likely on HID interfaces because no vendor bulk IN endpoint is exposed.
+- Physical key event format is [CONFIRMED] over HID (`04 50`..`04 59`, release `04 00`).
 - Brightness control still [UNKNOWN] — not present in FxChiP source.
 - USB captures (Section H.2) may still be needed for key addressing + key events, but
   must be done BEFORE Zadig binding (while Razer driver is still active).
@@ -210,7 +216,7 @@ means the code you run after Zadig is now correct where it previously wasn't.**
 
 **Test baseline after PR #3 was 110 tests: 108 pass + 2 `pyusb`-gated skips** (the
 2 skips run and pass on CI, which now installs `requirements.txt`). Current local
-baseline after PR #5 live-hardware hardening is 117 passing tests.
+baseline after screen-transfer and HID parsing fixes is 124 passing tests.
 
 ### Highest-impact fixes (these directly affect bring-up)
 - **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
@@ -268,3 +274,7 @@ via Section G/H on real hardware as originally planned.
   endpoint. PR #5 fixed this by sleeping in the no-IN path and added a regression
   test. The PR was merged to `master` as merge commit
   `8fe6cb8d0744477c230399437d2a72d2c9d50ffc`.
+- Phone-camera validation confirmed the main touch LCD renders correctly after
+  switching to little-endian RGB565 and sending blits as a 12-byte header transfer
+  followed by one complete payload transfer. It also confirmed the old key-image
+  address hypothesis writes into the main touch LCD, not onto physical keys.

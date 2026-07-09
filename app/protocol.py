@@ -9,8 +9,8 @@ Protocol facts (derived from rzswitchblade C sources and RESEARCH.md):
   * Header = six big-endian uint16: opcode, x1, y1, x2, y2, checksum.
   * Checksum = XOR of the five preceding uint16 values (as uint16).
   * Rect is **inclusive** — pixel count = (x2 - x1 + 1) * (y2 - y1 + 1).
-  * Pixel format = RGB565, 2 bytes per pixel, big-endian within each pixel word
-    by default (configurable — set PIXEL_ENDIAN to 'big' or 'little').
+  * Pixel format = RGB565, 2 bytes per pixel, little-endian within each pixel
+    word on confirmed hardware.
 """
 
 from __future__ import annotations
@@ -42,6 +42,9 @@ VENDOR_PID = 0x0114
 # DeathStalker may differ — set via usb_link at runtime if needed.
 BULK_OUT_EP = 0x01
 BULK_IN_EP = 0x02
+
+HID_KEY_REPORT_ID = 0x04
+HID_KEY_BASE = 0x50
 
 
 # ---------------------------------------------------------------------------
@@ -188,4 +191,25 @@ def parse_key_event(data: bytes) -> Optional[KeyEvent]:
                 if mask & (1 << i):
                     return KeyEvent(key_index=i, pressed=True, raw=bytes(data))
 
+    return None
+
+
+def parse_hid_key_event(data: bytes, pressed_key: Optional[int] = None) -> Optional[KeyEvent]:
+    """Parse a DeathStalker LCD-key HID report.
+
+    Hardware capture confirms non-keyboard HID collection reports shaped like:
+
+    * ``04 50 ...`` through ``04 59 ...`` for key 0 through key 9 down.
+    * ``04 00 ...`` for release of the previously pressed key.
+
+    ``pressed_key`` supplies that previous key for release reports.
+    """
+    if len(data) < 2 or data[0] != HID_KEY_REPORT_ID:
+        return None
+
+    code = data[1]
+    if HID_KEY_BASE <= code < HID_KEY_BASE + KEY_COUNT:
+        return KeyEvent(key_index=code - HID_KEY_BASE, pressed=True, raw=bytes(data))
+    if code == 0 and pressed_key is not None:
+        return KeyEvent(key_index=pressed_key, pressed=False, raw=bytes(data))
     return None

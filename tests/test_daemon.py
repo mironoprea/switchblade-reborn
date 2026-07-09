@@ -105,3 +105,27 @@ class TestDaemonInit:
         daemon.switch_profile("media")
         assert daemon._current_profile_name == "media"
         assert daemon.profiles_data["active_profile"] == "media"
+
+    def test_render_full_profile_does_not_blit_key_images(self, monkeypatch):
+        daemon = Daemon(web=False)
+        daemon.profiles_data = {
+            "version": 1,
+            "active_profile": "default",
+            "settings": {},
+            "auto_switch": {},
+            "profiles": {
+                "default": {
+                    "screen": {"type": "image", "path": "missing.png"},
+                    "keys": [
+                        {"image": "images/key0.png", "label": "Key 0", "action": None}
+                    ],
+                }
+            },
+        }
+
+        key_blits = []
+        monkeypatch.setattr(daemon, "_blit_key", lambda *args: key_blits.append(args))
+
+        daemon._render_full_profile()
+
+        assert key_blits == []

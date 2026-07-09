@@ -213,7 +213,7 @@ class Daemon:
         return
 
     def _render_full_profile(self) -> None:
-        """Render screen + all key images for the current profile."""
+        """Render the current profile's main screen."""
         with self._render_lock:
             self._render_screen()
             self._render_all_keys()
@@ -241,10 +241,14 @@ class Daemon:
             self._blit_rect(rect, payload)
 
     def _render_all_keys(self) -> None:
-        profile = profiles_mod.get_active_profile(self.profiles_data)
-        keys = profile.get("keys", [])
-        for i in range(protocol.KEY_COUNT):
-            self._render_key(i, keys[i] if i < len(keys) else None)
+        """Skip unconfirmed key-image blits.
+
+        Hardware testing showed the old ``y=480`` key-image hypothesis writes
+        onto the main touch LCD instead of separate key displays.  The key image
+        fields remain useful for profile metadata and the web UI, but physical
+        key rendering is disabled until captures reveal a real address scheme.
+        """
+        logger.debug("Skipping key-image blits; hardware addressing is unconfirmed.")
 
     def _render_key(self, key_index: int, key_config: Optional[dict]) -> None:
         image_path = key_config.get("image") if key_config else None
@@ -268,16 +272,27 @@ class Daemon:
     def _blit_rect(self, rect, payload: bytes) -> None:
         packet = protocol.build_blit(rect.x1, rect.y1, rect.x2, rect.y2, payload)
         try:
-            self.link.write(packet)
+            self._write_blit_packet(packet)
         except ConnectionError as exc:
             logger.debug("Blit failed (device may have disconnected): %s", exc)
 
     def _blit_key(self, key_index: int, rgb565: bytes) -> None:
         packet = protocol.build_key_blit(key_index, rgb565)
         try:
-            self.link.write(packet)
+            self._write_blit_packet(packet)
         except ConnectionError as exc:
             logger.debug("Key blit failed: %s", exc)
+
+    def _write_blit_packet(self, packet: bytes) -> None:
+        """Send a blit as header + one payload transfer.
+
+        Hardware testing on the DeathStalker Ultimate confirms that chunking the
+        pixel payload into 512-byte writes does not update the display reliably.
+        The working form matches FxChiP/rzswitchblade: a 12-byte header transfer
+        followed by the complete framebuffer/payload as one bulk transfer.
+        """
+        self.link.write_transfer(packet[:protocol.HEADER_SIZE])
+        self.link.write_transfer(packet[protocol.HEADER_SIZE:])
 
     def _refresh_widgets(self) -> None:
         with self._render_lock:
@@ -391,17 +406,19 @@ class Daemon:
             return
         fb = render_image_to_framebuffer(image_path)
         packet = protocol.build_screen_blit(fb)
-        self.link.write(packet)
+        self._write_blit_packet(packet)
         logger.info("Screen blit complete: %s", image_path)
 
     def blit_key(self, key_index: int, image_path: str) -> None:
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
-        rgb565 = render_key_image_to_rgb565(image_path)
-        packet = protocol.build_key_blit(key_index, rgb565)
-        self.link.write(packet)
-        logger.info("Key %d blit complete: %s", key_index, image_path)
+        logger.warning(
+            "Key image blits are disabled: current addressing writes to the main LCD "
+            "(key=%d, image=%s).",
+            key_index,
+            image_path,
+        )
 
     # ------------------------------------------------------------------
     # Utilities

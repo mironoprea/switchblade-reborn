@@ -18,7 +18,7 @@ from app.renderer import render_image_to_framebuffer
 def main() -> int:
     parser = argparse.ArgumentParser(description="Blit a test image to the trackpad screen")
     parser.add_argument("image", help="Path to image file")
-    parser.add_argument("--endian", choices=["big", "little"], default="big")
+    parser.add_argument("--endian", choices=["big", "little"], default="little")
     parser.add_argument("--interface", type=int, default=None)
     args = parser.parse_args()
 
@@ -41,7 +41,8 @@ def main() -> int:
 
     fb = render_image_to_framebuffer(args.image, endian=args.endian)
     packet = protocol.build_screen_blit(fb)
-    link.write(packet)
+    link.write_transfer(packet[:protocol.HEADER_SIZE])
+    link.write_transfer(packet[protocol.HEADER_SIZE:])
     print("Blit sent.")
     link.disconnect()
     return 0

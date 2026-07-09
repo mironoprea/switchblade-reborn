@@ -22,13 +22,12 @@ from .protocol import SCREEN_WIDTH, SCREEN_HEIGHT, KEY_IMAGE_SIZE, KEY_COUNT
 def image_to_rgb565(
     img: Image.Image,
     *,
-    endian: str = "big",
+    endian: str = "little",
 ) -> bytes:
     """Convert a PIL image to RGB565 byte stream.
 
     *endian* is ``'big'`` or ``'little'`` — the byte order within each 16-bit
-    pixel word.  Big-endian is the default; byte-swap to little-endian if
-    colors come out swapped on hardware.
+    pixel word.  Little-endian is the hardware-confirmed default.
     """
     if endian not in ("big", "little"):
         raise ValueError(f"endian must be 'big' or 'little', got {endian!r}")
@@ -49,7 +48,7 @@ def image_to_rgb565(
     return bytes(buf)
 
 
-def image_to_rgb565_fast(img: Image.Image, *, endian: str = "big") -> bytes:
+def image_to_rgb565_fast(img: Image.Image, *, endian: str = "little") -> bytes:
     """Optimized RGB565 using numpy bit operations."""
     if endian not in ("big", "little"):
         raise ValueError(f"endian must be 'big' or 'little', got {endian!r}")
@@ -157,7 +156,7 @@ def extract_region(
     height: int,
     rect: DirtyRect,
     *,
-    endian: str = "big",
+    endian: str = "little",
 ) -> bytes:
     """Extract a sub-rectangle from a full RGB565 framebuffer.
 
@@ -180,7 +179,7 @@ class ScreenRenderer:
     """Manages current/pending framebuffers and dirty-rect blitting."""
     width: int = SCREEN_WIDTH
     height: int = SCREEN_HEIGHT
-    endian: str = "big"
+    endian: str = "little"
     _current: Optional[bytes] = field(default=None, repr=False)
     _pending: Optional[bytes] = field(default=None, repr=False)
 
@@ -227,7 +226,7 @@ def render_image_to_framebuffer(
     *,
     width: int = SCREEN_WIDTH,
     height: int = SCREEN_HEIGHT,
-    endian: str = "big",
+    endian: str = "little",
 ) -> bytes:
     """Load, resize, and convert an image file to an RGB565 framebuffer."""
     img = load_image(path)
@@ -239,7 +238,7 @@ def render_image_to_framebuffer(
 def render_key_image_to_rgb565(
     path: str,
     *,
-    endian: str = "big",
+    endian: str = "little",
 ) -> bytes:
     """Load, resize, and convert a key image to RGB565."""
     img = load_image(path)
@@ -254,7 +253,7 @@ def render_solid_color(
     *,
     width: int = SCREEN_WIDTH,
     height: int = SCREEN_HEIGHT,
-    endian: str = "big",
+    endian: str = "little",
 ) -> bytes:
     """Generate a solid-color RGB565 framebuffer (for testing)."""
     img = Image.new("RGB", (width, height), (r, g, b))

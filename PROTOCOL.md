@@ -23,15 +23,14 @@ HID interfaces (class 0x03) must NOT be touched.
 **[PORTED from FxChiP/rzswitchblade]** Header format, opcode, and checksum confirmed
 against the C source (`rzsblit_proto.c`, `rzsblit_sync.c`).
 
-A blit consists of a 12-byte header followed by RGB565 pixel data, sent as
-consecutive bulk OUT transfers to endpoint 0x01.
+A blit consists of a 12-byte header followed by RGB565 pixel data, sent to bulk
+OUT endpoint 0x01.
 
-**[PORTED from FxChiP/rzswitchblade]** In the original C library, the 12-byte header
-and the pixel payload are sent as **two separate** `libusb_bulk_transfer` calls (header
-first, then pixel data). The current Python implementation concatenates them into a
-single `write()` call, which is internally chunked to `max_out_packet` (512 bytes).
-If blits fail on hardware, try sending the header and payload as separate transfers
-(see IMPLEMENTATION_PLAN.md Section G.5).
+**[CONFIRMED]** The DeathStalker Ultimate updates the screen when the 12-byte
+header and pixel payload are sent as **two separate** bulk transfers: header first,
+then the complete payload as one transfer. Chunking the payload into 512-byte
+writes completed at the USB level but did not update the LCD reliably. This
+matches the FxChiP/rzswitchblade transfer shape.
 
 ### Header (12 bytes)
 
@@ -58,9 +57,9 @@ The rectangle is **inclusive**: pixel count = (x2 - x1 + 1) × (y2 - y1 + 1).
 
 ### Pixel format
 
-RGB565, 2 bytes per pixel.  Big-endian within each pixel word by default
-(most significant byte first).  If colors appear swapped on hardware, switch
-to little-endian byte order per pixel.
+RGB565, 2 bytes per pixel. **[CONFIRMED]** Little-endian byte order within each
+pixel word is required on this hardware. Big-endian writes produced swapped or
+wrong colors during live bring-up.
 
 Pixel value:
 ```
@@ -84,7 +83,10 @@ Header bytes:
 
 Payload: 800 × 480 × 2 = 768,000 bytes of `0x00 0x00` (black pixels).
 
-### Example: key blit (key 0, 115×115, solid red)
+### Rejected example: old key blit hypothesis (key 0, 115×115)
+
+These bytes are retained only as documentation of the rejected hypothesis. Live
+testing showed this address writes into the main touch LCD, not a physical key.
 
 Header bytes:
 ```
@@ -98,16 +100,19 @@ Header bytes:
 
 ## Key image addressing
 
-**[UNKNOWN]** The exact addressing of dynamic key images is not yet confirmed.
+**[REJECTED hypothesis / UNKNOWN replacement]** The exact addressing of dynamic key
+images is not yet confirmed. Hardware testing showed the old virtual-framebuffer
+hypothesis (`y = 480`, one 115×115 region per key) writes onto the main touch LCD
+instead of separate physical key displays. The daemon therefore does **not** blit
+profile key images to hardware keys by default.
 FxChiP/rzswitchblade only implements touchpad blitting (`rzswitchblade_blit_tp_sync`);
 no key-image addressing code exists in that library.
 
-Two hypotheses:
+Remaining hypotheses:
 
-1. Keys are an extended region of the same virtual framebuffer, starting at
-   y = 480 (below the screen).  Each key is 115×115 pixels, laid out
-   horizontally: key 0 at x=0, key 1 at x=115, etc.
-2. A different opcode or endpoint is used for key images.
+1. A different opcode, endpoint, report, or mode is used for physical key images.
+2. The physical key backlights may not be individually addressable as full images
+   on this DeathStalker Ultimate firmware path.
 
 **[PORTED from FxChiP/rzswitchblade]** The FxChiP README states each "macro button"
 can hold a **116×116** icon (not 115×115). The current code uses 115; if key
@@ -117,18 +122,25 @@ A USB capture of Synapse assigning key images resolves this.
 
 ## Key events
 
-**[UNKNOWN]** Key press events are not yet confirmed. Live enumeration on
-2026-07-09 showed no vendor bulk IN endpoint on interface 3; endpoint `0x02`
-is reported as a second bulk OUT endpoint, so LCD-key events likely arrive on
-one of the HID interrupt IN endpoints instead. The exact packet format is
-unknown.  Two legacy vendor-packet hypotheses are still implemented in
-`protocol.parse_key_event()` for captures that do produce raw key bytes:
+**[CONFIRMED]** Physical LCD-key presses arrive on a non-keyboard HID collection,
+not the vendor interface. Live enumeration on 2026-07-09 showed no vendor bulk IN
+endpoint on interface 3; endpoint `0x02` is reported as a second bulk OUT endpoint.
+
+Captured HID reports use report ID `0x04`:
+
+1. `04 50 ...` through `04 59 ...` = physical LCD key 0 through 9 pressed.
+2. `04 00 ...` = release of the previously pressed physical LCD key.
+
+The physical keys and the main touch LCD are distinct surfaces. Do not infer key
+image addressing from physical keypress reports.
+
+Two legacy vendor-packet hypotheses are still implemented in
+`protocol.parse_key_event()` for captures that do produce raw vendor key bytes:
 
 1. `byte[0]` = key index (1-indexed, 1-10), `byte[1]` = down/up flag.
 2. `byte[0]` = bitmask of pressed keys (bit 0 = key 0, etc.)
 
-If no events arrive on the vendor interface, listen on HID interfaces via
-hidapi instead.
+The daemon uses hidapi for this path when the vendor interface has no IN endpoint.
 
 **[CONFIRMED implementation behavior]** Because the attached hardware exposes no
 vendor bulk IN endpoint, `UsbLink.read()` returns `b""` immediately in that state

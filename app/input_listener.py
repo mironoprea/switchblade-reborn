@@ -10,7 +10,18 @@ import threading
 import time
 from typing import Callable, Optional
 
-from .protocol import parse_key_event, KeyEvent
+try:
+    import hid
+except ImportError:
+    hid = None
+
+from .protocol import (
+    VENDOR_PID,
+    VENDOR_VID,
+    parse_hid_key_event,
+    parse_key_event,
+    KeyEvent,
+)
 from .usb_link import UsbLink
 
 logger = logging.getLogger(__name__)
@@ -35,6 +46,9 @@ class InputListener:
         self._stop = threading.Event()
         self._last_key_time: dict[int, float] = {}
         self._last_key_state: dict[int, bool] = {}
+        self._hid_handles: list = []
+        self._hid_opened = False
+        self._hid_pressed_key: Optional[int] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -49,6 +63,7 @@ class InputListener:
         if self._thread:
             self._thread.join(timeout=2.0)
         self._thread = None
+        self._close_hid()
         logger.info("Input listener stopped.")
 
     def _run(self) -> None:
@@ -58,10 +73,8 @@ class InputListener:
                 continue
             info = self._link.info
             if info is not None and info.in_endpoint is None:
-                # No vendor IN endpoint; read() would return instantly, so pace
-                # the loop to avoid busy-spinning a CPU core.  Any key events
-                # arrive over HID, not this path.
-                time.sleep(0.5)
+                self._poll_hid()
+                time.sleep(0.01)
                 continue
             try:
                 data = self._link.read(length=512, timeout=self._read_timeout)
@@ -103,3 +116,59 @@ class InputListener:
             self._callback(event)
         except Exception as exc:
             logger.error("Callback error: %s", exc)
+
+    def _poll_hid(self) -> None:
+        if not self._hid_opened:
+            self._open_hid()
+        if not self._hid_handles:
+            return
+
+        for dev in list(self._hid_handles):
+            try:
+                data = bytes(dev.read(64))
+            except OSError as exc:
+                logger.debug("HID read failed: %s", exc)
+                continue
+            if not data:
+                continue
+
+            event = parse_hid_key_event(data, self._hid_pressed_key)
+            if event is None:
+                logger.debug("Unknown HID packet: %s", data.hex())
+                continue
+            self._hid_pressed_key = event.key_index if event.pressed else None
+            self._dispatch(event)
+
+    def _open_hid(self) -> None:
+        self._hid_opened = True
+        if hid is None:
+            logger.warning("hidapi not installed; HID key listener disabled.")
+            return
+
+        for info in hid.enumerate(VENDOR_VID, VENDOR_PID):
+            if _is_keyboard_collection(info):
+                continue
+            dev = hid.device()
+            try:
+                dev.open_path(info["path"])
+                dev.set_nonblocking(True)
+            except OSError as exc:
+                logger.debug("Skipping HID collection: %s", exc)
+                continue
+            self._hid_handles.append(dev)
+
+        logger.info("HID key listener opened %d collections.", len(self._hid_handles))
+
+    def _close_hid(self) -> None:
+        for dev in self._hid_handles:
+            try:
+                dev.close()
+            except OSError:
+                pass
+        self._hid_handles = []
+        self._hid_opened = False
+        self._hid_pressed_key = None
+
+
+def _is_keyboard_collection(device_info: dict) -> bool:
+    return device_info.get("usage_page") == 0x01 and device_info.get("usage") == 0x06

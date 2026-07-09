@@ -9,15 +9,15 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | all tests pass (116), profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass (124), profiles valid, libusb backend loads |
 | Code hardening (review) | Done | Transport/actions/web-API bugs fixed in PR #3; see HANDOFF.md §8 |
 | USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, blit OUT endpoint selection patched |
-| Protocol layer (blit, checksum) | Ported | Header format, opcode, XOR checksum confirmed from FxChiP/rzswitchblade |
+| Protocol layer (blit, checksum) | Working | Header/checksum confirmed; screen blits use little-endian RGB565 and header+single-payload transfers |
 | Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |
-| Driver binding (Zadig) | **Blocked** | Interface 3 still has Razer driver, not WinUSB. Must run Zadig manually. |
-| Hardware bring-up | **Not started** | Requires Zadig first, then blit/key-event testing on real hardware |
-| Key image addressing | Unknown | FxChiP only does touchpad; y=480 hypothesis unconfirmed |
-| Key event format | Unknown | Likely HID; live enumeration shows no vendor bulk IN endpoint |
+| Driver binding (Zadig) | Done | Interface 3 bound to WinUSB with Zadig |
+| Hardware bring-up | Partial | Main LCD renders; physical key events captured over HID |
+| Key image addressing | Unknown | y=480 hypothesis rejected; daemon key-image blits disabled |
+| Key event format | Working | Physical LCD keys report over HID as `04 50`..`04 59`, release `04 00` |
 | Brightness control | Unknown | Not in FxChiP; may need Razer HID feature report |
 | Web UI, profiles, actions, widgets | Working | All functional, covered by tests |
 
@@ -47,7 +47,7 @@ The web UI is available at `http://127.0.0.1:8377`.
 python -m app.cli run                 # Start the daemon (screen, keys, web UI)
 python -m app.cli profile <name>      # Switch active profile
 python -m app.cli blit-screen <image>  # Blit an image to the trackpad screen
-python -m app.cli blit-key <N> <img>   # Blit an image to dynamic key N (0-9)
+python -m app.cli blit-key <N> <img>   # Disabled until key-image addressing is known
 python -m app.cli validate            # Validate profiles.json
 python -m app.cli status              # Show connection state and active profile
 python -m app.cli install-autostart    # Install Windows Task Scheduler autostart
@@ -58,7 +58,7 @@ python tools\listen_hid.py             # Diagnostic: print raw HID reports
 ## Features
 
 - **Trackpad screen**: display any image on the 800×480 LCD via the USB blit protocol.
-- **Dynamic keys**: display per-key images on all 10 LCD keys.
+- **Physical LCD keys**: key presses are read over HID and can trigger actions.
 - **Actions**: launch apps, inject keyboard shortcuts, control media, switch profiles.
 - **Profiles**: named sets of key images + actions, switchable at runtime.
 - **Web UI**: edit profiles, upload images, switch profiles from your browser.
