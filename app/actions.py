@@ -7,18 +7,19 @@ Action types:
   - media:    media key injection (play/pause, next, prev, volume, mute)
   - profile:  switch active profile
 
-On non-Windows platforms (or when pywin32 is unavailable), 'keys' and 'media'
-fall back to logging — they need Windows SendInput to actually work.
+On non-Windows platforms, 'keys' and 'media' fall back to logging — they need
+Windows SendInput to actually work.  Key injection uses stdlib ``ctypes`` only
+(no pywin32 dependency).
 """
 
 from __future__ import annotations
 
+import ctypes
 import logging
-import os
 import platform
 import subprocess
 import threading
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +28,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 IS_WINDOWS = platform.system() == "Windows"
-
-if IS_WINDOWS:
-    try:
-        import win32con
-        import win32api
-        import win32gui
-        import ctypes
-        _HAS_WIN32 = True
-    except ImportError:
-        _HAS_WIN32 = False
-        logger.warning(
-            "pywin32 not available; 'keys' and 'media' actions will be no-ops."
-        )
-else:
-    _HAS_WIN32 = False
 
 
 # ---------------------------------------------------------------------------
@@ -122,59 +108,127 @@ for i in range(1, 13):
 
 
 # ---------------------------------------------------------------------------
-# SendInput helpers (Windows)
+# SendInput structures (Win32) — canonical layout
 # ---------------------------------------------------------------------------
+#
+# ``INPUT`` is 40 bytes on x64 / 28 bytes on x86.  SendInput rejects the call
+# (returns 0, injects nothing) when ``cbSize`` doesn't match the OS's expected
+# size, so the union MUST size itself via the real member structs — no padding.
 
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_EXTENDEDKEY = 0x0001
+
+# ULONG_PTR — pointer-sized unsigned integer (the correct type for dwExtraInfo).
+ULONG_PTR = ctypes.c_size_t
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    # Present only so the union sizes to the largest member (as the OS expects).
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.c_ulong),
+        ("wParamL", ctypes.c_ushort),
+        ("wParamH", ctypes.c_ushort),
+    ]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [
+        ("mi", _MOUSEINPUT),
+        ("ki", _KEYBDINPUT),
+        ("hi", _HARDWAREINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("u", _INPUTUNION),
+    ]
+
+
+# Virtual keys on the "extended" region of the keyboard; these need
+# KEYEVENTF_EXTENDEDKEY set for reliable injection.
+_EXTENDED_VKS = frozenset({
+    VK_DELETE, VK_HOME, VK_END, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
+})
+
+
+# Load user32 with last-error capture so SendInput failures can be diagnosed.
+if IS_WINDOWS:
+    try:
+        _user32 = ctypes.WinDLL("user32", use_last_error=True)
+        _user32.SendInput.argtypes = (
+            ctypes.c_uint,
+            ctypes.POINTER(INPUT),
+            ctypes.c_int,
+        )
+        _user32.SendInput.restype = ctypes.c_uint
+        _HAS_WIN32 = True
+    except (OSError, AttributeError) as exc:  # pragma: no cover - Windows only
+        _user32 = None
+        _HAS_WIN32 = False
+        logger.warning("user32.SendInput unavailable; 'keys'/'media' are no-ops: %s", exc)
+else:
+    _user32 = None
+    _HAS_WIN32 = False
+
+
+def _make_key_input(vk: int, flags: int) -> INPUT:
+    if vk in _EXTENDED_VKS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    inp = INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.ki.wVk = vk
+    inp.ki.wScan = 0
+    inp.ki.dwFlags = flags
+    inp.ki.time = 0
+    inp.ki.dwExtraInfo = 0
+    return inp
+
+
+def _send_inputs(inputs: list) -> None:
+    """Inject a sequence of INPUT events, logging any partial/failed send."""
+    n = len(inputs)
+    if n == 0 or _user32 is None:
+        return
+    arr = (INPUT * n)(*inputs)
+    sent = _user32.SendInput(n, arr, ctypes.sizeof(INPUT))
+    if sent != n:
+        err = ctypes.get_last_error()
+        logger.error("SendInput injected %d of %d events (last error %d).", sent, n, err)
 
 
 def _send_key_down_up(vk: int) -> None:
     """Press and release a single virtual key via SendInput."""
     if not (IS_WINDOWS and _HAS_WIN32):
         return
-
-    user32 = ctypes.windll.user32
-
-    # Key down
-    extra = ctypes.c_ulong(0)
-    # INPUT structure: type + ki (keyboard input)
-    # We use the ctypes Structure approach for SendInput
-
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", ctypes.c_ushort),
-            ("wScan", ctypes.c_ushort),
-            ("dwFlags", ctypes.c_ulong),
-            ("time", ctypes.c_ulong),
-            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-        ]
-
-    class INPUT(ctypes.Structure):
-        class _INPUT(ctypes.Union):
-            _fields_ = [
-                ("ki", KEYBDINPUT),
-                ("pad", ctypes.c_ubyte * 64),
-            ]
-        _anonymous_ = ("_input",)
-        _fields_ = [("type", ctypes.c_ulong), ("_input", _INPUT)]
-
-    def make_input(vk_code: int, flags: int) -> INPUT:
-        inp = INPUT()
-        inp.type = INPUT_KEYBOARD
-        inp.ki.wVk = vk_code
-        inp.ki.wScan = 0
-        inp.ki.dwFlags = flags
-        inp.ki.time = 0
-        inp.ki.dwExtraInfo = ctypes.pointer(extra)
-        return inp
-
-    inputs = (INPUT * 2)(
-        make_input(vk, 0),
-        make_input(vk, KEYEVENTF_KEYUP),
-    )
-    user32.SendInput(2, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
+    _send_inputs([
+        _make_key_input(vk, 0),
+        _make_key_input(vk, KEYEVENTF_KEYUP),
+    ])
 
 
 def _send_combo(combo_str: str) -> None:
@@ -186,38 +240,6 @@ def _send_combo(combo_str: str) -> None:
     if not (IS_WINDOWS and _HAS_WIN32):
         logger.info("Would send keys: %s", combo_str)
         return
-
-    user32 = ctypes.windll.user32
-
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", ctypes.c_ushort),
-            ("wScan", ctypes.c_ushort),
-            ("dwFlags", ctypes.c_ulong),
-            ("time", ctypes.c_ulong),
-            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-        ]
-
-    class INPUT(ctypes.Structure):
-        class _INPUT(ctypes.Union):
-            _fields_ = [
-                ("ki", KEYBDINPUT),
-                ("pad", ctypes.c_ubyte * 64),
-            ]
-        _anonymous_ = ("_input",)
-        _fields_ = [("type", ctypes.c_ulong), ("_input", _INPUT)]
-
-    extra = ctypes.c_ulong(0)
-
-    def make_input(vk_code: int, flags: int) -> INPUT:
-        inp = INPUT()
-        inp.type = INPUT_KEYBOARD
-        inp.ki.wVk = vk_code
-        inp.ki.wScan = 0
-        inp.ki.dwFlags = flags
-        inp.ki.time = 0
-        inp.ki.dwExtraInfo = ctypes.pointer(extra)
-        return inp
 
     vks = []
     for p in parts:
@@ -231,15 +253,9 @@ def _send_combo(combo_str: str) -> None:
             logger.warning("Unknown key in combo '%s': %s", combo_str, p)
             return
 
-    inputs_list = []
-    for vk in vks:
-        inputs_list.append(make_input(vk, 0))
-    for vk in reversed(vks):
-        inputs_list.append(make_input(vk, KEYEVENTF_KEYUP))
-
-    n = len(inputs_list)
-    arr = (INPUT * n)(*inputs_list)
-    user32.SendInput(n, ctypes.pointer(arr[0]), ctypes.sizeof(INPUT))
+    inputs = [_make_key_input(vk, 0) for vk in vks]
+    inputs += [_make_key_input(vk, KEYEVENTF_KEYUP) for vk in reversed(vks)]
+    _send_inputs(inputs)
 
 
 # ---------------------------------------------------------------------------

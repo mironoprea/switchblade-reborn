@@ -46,7 +46,6 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROFILES_DIR = BASE_DIR / "profiles"
 PROFILES_FILE = PROFILES_DIR / "profiles.json"
-IMAGES_DIR = PROFILES_DIR / "images"
 
 
 class Daemon:
@@ -65,13 +64,19 @@ class Daemon:
         self.renderer = ScreenRenderer()
         self.input_listener: Optional[InputListener] = None
         self._running = False
-        self._key_images: dict[int, bytes] = {}
+        self._initialized_device = False
+        self._blank_key: Optional[bytes] = None
         self._current_profile_name: Optional[str] = None
         self._widget_timer = 0.0
         self._auto_switcher = None
         self._web_thread: Optional[threading.Thread] = None
         self._web_app = None
         self._enable_web = web
+        # Serializes all rendering: the main loop's widget refresh runs on the
+        # main thread while profile switches arrive from the auto-switcher,
+        # action-worker, and Flask threads.  Reentrant so nested render calls
+        # (switch_profile -> _render_full_profile) don't self-deadlock.
+        self._render_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Startup
@@ -100,7 +105,6 @@ class Daemon:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         self._running = True
-        self._initialized_device = False
 
         # Start web UI
         if self._enable_web:
@@ -147,7 +151,7 @@ class Daemon:
             )
             self._auto_switcher.start()
         except Exception as exc:
-            logger.debug("Auto-switcher not started: %s", exc)
+            logger.warning("Auto-switcher not started: %s", exc)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -190,8 +194,9 @@ class Daemon:
     def _on_device_ready(self) -> None:
         """Called when the device enters READY state for the first time."""
         logger.info("Device ready. Rendering active profile.")
-        self.renderer.force_full_redraw()
-        self._render_full_profile()
+        with self._render_lock:
+            self.renderer.force_full_redraw()
+            self._render_full_profile()
 
     def _initialize_device(self) -> None:
         """Send the device init/mode-switch sequence, if any.
@@ -209,8 +214,9 @@ class Daemon:
 
     def _render_full_profile(self) -> None:
         """Render screen + all key images for the current profile."""
-        self._render_screen()
-        self._render_all_keys()
+        with self._render_lock:
+            self._render_screen()
+            self._render_all_keys()
 
     def _render_screen(self) -> None:
         profile = profiles_mod.get_active_profile(self.profiles_data)
@@ -241,12 +247,23 @@ class Daemon:
             self._render_key(i, keys[i] if i < len(keys) else None)
 
     def _render_key(self, key_index: int, key_config: Optional[dict]) -> None:
-        if key_config is None:
-            return
-        image_path = key_config.get("image")
+        image_path = key_config.get("image") if key_config else None
         if image_path and os.path.isfile(self._resolve_path(image_path)):
             rgb565 = render_key_image_to_rgb565(self._resolve_path(image_path))
-            self._blit_key(key_index, rgb565)
+        else:
+            # No image for this key: blit black so a previous profile's image
+            # doesn't linger on the physical key after a switch.
+            rgb565 = self._blank_key_image()
+        self._blit_key(key_index, rgb565)
+
+    def _blank_key_image(self) -> bytes:
+        if self._blank_key is None:
+            self._blank_key = render_solid_color(
+                0, 0, 0,
+                width=protocol.KEY_IMAGE_SIZE,
+                height=protocol.KEY_IMAGE_SIZE,
+            )
+        return self._blank_key
 
     def _blit_rect(self, rect, payload: bytes) -> None:
         packet = protocol.build_blit(rect.x1, rect.y1, rect.x2, rect.y2, payload)
@@ -263,16 +280,17 @@ class Daemon:
             logger.debug("Key blit failed: %s", exc)
 
     def _refresh_widgets(self) -> None:
-        profile = profiles_mod.get_active_profile(self.profiles_data)
-        screen = profile.get("screen", {})
-        if screen.get("type") != "widget_board":
-            return
-        img, dirty_rects = render_widget_board(screen)
-        fb = image_to_rgb565_fast(img)
-        result = self.renderer.update(fb)
-        if result is not None:
-            rect, payload = result
-            self._blit_rect(rect, payload)
+        with self._render_lock:
+            profile = profiles_mod.get_active_profile(self.profiles_data)
+            screen = profile.get("screen", {})
+            if screen.get("type") != "widget_board":
+                return
+            img, _ = render_widget_board(screen)
+            fb = image_to_rgb565_fast(img)
+            result = self.renderer.update(fb)
+            if result is not None:
+                rect, payload = result
+                self._blit_rect(rect, payload)
 
     # ------------------------------------------------------------------
     # Key event handling
@@ -297,31 +315,64 @@ class Daemon:
     # Profile management
     # ------------------------------------------------------------------
 
-    def switch_profile(self, name: str) -> None:
-        """Switch the active profile and re-render."""
-        try:
-            profiles_mod.set_active_profile(self.profiles_data, name)
-        except profiles_mod.ProfileError as exc:
-            logger.error("Profile switch failed: %s", exc)
-            return
-        self._current_profile_name = name
-        self.profiles_data["active_profile"] = name
-        logger.info("Switched to profile: %s", name)
-        self.renderer.force_full_redraw()
-        if self.link.is_ready():
-            self._render_full_profile()
+    def switch_profile(self, name: str) -> bool:
+        """Switch the active profile and re-render.
+
+        Returns True on success, False if the profile doesn't exist.  Never
+        raises — it's called from the auto-switcher and action-worker threads,
+        which treat a bad name as a no-op.
+        """
+        with self._render_lock:
+            try:
+                profiles_mod.set_active_profile(self.profiles_data, name)
+            except profiles_mod.ProfileError as exc:
+                logger.error("Profile switch failed: %s", exc)
+                return False
+            self._current_profile_name = name
+            self.profiles_data["active_profile"] = name
+            logger.info("Switched to profile: %s", name)
+            self.renderer.force_full_redraw()
+            if self.link.is_ready():
+                self._render_full_profile()
+        return True
+
+    def put_profiles(self, data: dict) -> None:
+        """Replace all profile data (from the web UI) and re-render.
+
+        Caller is responsible for validating ``data`` first.
+        """
+        with self._render_lock:
+            self.profiles_data = data
+            self._current_profile_name = data.get("active_profile")
+            self._sync_auto_switcher()
+            self.save_profiles()
+            self.renderer.force_full_redraw()
+            if self.link.is_ready():
+                self._render_full_profile()
 
     def reload_profiles(self) -> None:
         """Reload profiles.json from disk."""
         try:
-            self.profiles_data = profiles_mod.load_profiles(self.profiles_path)
-            self._current_profile_name = self.profiles_data.get("active_profile", "default")
+            data = profiles_mod.load_profiles(self.profiles_path)
+        except profiles_mod.ProfileError as exc:
+            logger.error("Profile reload failed: %s", exc)
+            return
+        with self._render_lock:
+            self.profiles_data = data
+            self._current_profile_name = data.get("active_profile", "default")
+            self._sync_auto_switcher()
             self.renderer.force_full_redraw()
             if self.link.is_ready():
                 self._render_full_profile()
-            logger.info("Profiles reloaded.")
-        except profiles_mod.ProfileError as exc:
-            logger.error("Profile reload failed: %s", exc)
+        logger.info("Profiles reloaded.")
+
+    def _sync_auto_switcher(self) -> None:
+        """Push the current auto_switch map into the running switcher."""
+        if self._auto_switcher is not None:
+            self._auto_switcher.update_map(
+                self.profiles_data.get("auto_switch", {}),
+                self.profiles_data.get("active_profile", "default"),
+            )
 
     def save_profiles(self) -> None:
         """Persist current profiles to disk."""

@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -84,8 +83,11 @@ class AutoSwitcher:
         self._current_profile = default_profile
 
     def start(self) -> None:
-        if not IS_WINDOWS:
-            logger.info("Auto-switch is Windows-only; not starting.")
+        if not (IS_WINDOWS and _HAS_WIN32):
+            logger.info("Auto-switch needs Windows + pywin32; not starting.")
+            return
+        if not self._map:
+            logger.info("Auto-switch map is empty; not starting.")
             return
         if self._thread and self._thread.is_alive():
             return

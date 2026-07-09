@@ -176,11 +176,14 @@ def parse_key_event(data: bytes) -> Optional[KeyEvent]:
             pressed = data[1] != 0
             return KeyEvent(key_index=idx - 1, pressed=pressed, raw=bytes(data))
 
-    # Pattern 2: bitmask (each bit = one key, down when set)
-    if len(data) >= 1:
+    # Pattern 2: single-byte bitmask (each bit = one key, down when set).
+    # Restricted to length-1 packets: the old `mask < (1 << KEY_COUNT)` bound was
+    # always true for a byte (max 255 < 1024), so any unmatched multi-byte junk
+    # was misread as a key press.  Returns the lowest set bit.  Note this pattern
+    # cannot express key-up.
+    if len(data) == 1:
         mask = data[0]
-        if mask != 0 and mask < (1 << KEY_COUNT):
-            # Return the lowest set bit as an event
+        if mask != 0:
             for i in range(KEY_COUNT):
                 if mask & (1 << i):
                     return KeyEvent(key_index=i, pressed=True, raw=bytes(data))

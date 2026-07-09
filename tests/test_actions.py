@@ -74,6 +74,16 @@ class TestExecuteActionAsync:
         callback.assert_called_once_with("media")
 
 
+class TestSendInputStruct:
+    def test_input_struct_size(self):
+        import ctypes
+        # SendInput rejects the call unless cbSize matches the OS's INPUT size:
+        # 40 bytes on x64, 28 on x86.  The old union padded to 72 and silently
+        # injected nothing.
+        expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+        assert ctypes.sizeof(actions.INPUT) == expected
+
+
 class TestKeyVkMap:
     def test_has_modifier_keys(self):
         assert "ctrl" in actions.KEY_VK_MAP

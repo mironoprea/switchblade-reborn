@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=61.0"]
-build-backend = "setuptools.backends._legacy:_LegacyBackend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "switchblade-reborn"
@@ -41,6 +41,9 @@ switchblade = "app.cli:main"
 
 [tool.setuptools]
 packages = ["app", "app.webui"]
+
+[tool.setuptools.package-data]
+"app.webui" = ["templates/*", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

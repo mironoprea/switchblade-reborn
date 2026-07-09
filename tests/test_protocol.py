@@ -116,10 +116,10 @@ class TestKeyEvent:
     def test_parse_unknown_packet(self):
         data = bytes([0xFF, 0xFF])
         event = protocol.parse_key_event(data)
-        # Should not match pattern 1 (index 255 > 10)
-        # Bitmask: 0xFF = bits 0-7, which are valid key indices
-        # So it could match pattern 2
-        assert event is not None or event is None  # either is acceptable
+        # Pattern 1: byte 0 = 255 is outside 1-10, no match.
+        # Pattern 2: only single-byte packets are treated as bitmasks, so this
+        # 2-byte junk is not misread as a key press.
+        assert event is None
 
     def test_parse_empty(self):
         event = protocol.parse_key_event(b"")

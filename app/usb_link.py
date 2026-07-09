@@ -11,6 +11,7 @@ Only this module touches pyusb.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -96,6 +97,10 @@ class UsbLink:
         self.state = DISCONNECTED
         self._last_try = 0.0
         self._io_lock = threading.Lock()
+        # Serializes teardown + state transitions across the main-loop thread
+        # and the input-listener thread so one can't null out ``dev`` while the
+        # other is mid-use.
+        self._state_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -107,8 +112,7 @@ class UsbLink:
             # Check if device still present
             if not self._device_present():
                 logger.info("Device disconnected (lost USB handle).")
-                self._release()
-                self.state = DISCONNECTED
+                self._teardown()
 
         if self.state == DISCONNECTED:
             now = time.time()
@@ -125,17 +129,20 @@ class UsbLink:
         """Write data to the bulk OUT endpoint.  Returns bytes written."""
         if self.state not in (READY, INITIALIZING):
             raise ConnectionError(f"Device not ready (state={self.state})")
-        if self.dev is None or self.info is None:
+        # Snapshot the handle so a concurrent teardown can't null it mid-use.
+        dev = self.dev
+        info = self.info
+        if dev is None or info is None:
             raise ConnectionError("No device handle")
         try:
             with self._io_lock:
                 total = 0
                 offset = 0
-                chunk = self.info.max_out_packet
+                chunk = info.max_out_packet
                 while offset < len(data):
                     end = min(offset + chunk, len(data))
-                    written = self.dev.write(
-                        self.info.out_endpoint,
+                    written = dev.write(
+                        info.out_endpoint,
                         data[offset:end],
                         timeout=USB_TIMEOUT,
                     )
@@ -145,32 +152,44 @@ class UsbLink:
         except Exception as exc:
             if usb is not None and isinstance(exc, usb.core.USBError):
                 logger.error("USB write error: %s", exc)
-                self._release()
-                self.state = DISCONNECTED
+                self._teardown()
                 raise ConnectionError(str(exc)) from exc
             raise
 
     def read(self, length: int = 64, timeout: int = USB_TIMEOUT) -> bytes:
-        """Read data from the bulk IN endpoint."""
+        """Read data from the bulk IN endpoint.
+
+        A read timeout is *not* an error — an idle device has nothing to send,
+        so timeouts return ``b""``.  Only genuine transfer errors tear down the
+        link.
+        """
         if self.state not in (READY, INITIALIZING):
             raise ConnectionError(f"Device not ready (state={self.state})")
-        if self.dev is None or self.info is None:
+        # Snapshot the handle so a concurrent teardown can't null it mid-use.
+        dev = self.dev
+        info = self.info
+        if dev is None or info is None:
             raise ConnectionError("No device handle")
         try:
             with self._io_lock:
-                data = self.dev.read(
-                    self.info.in_endpoint,
+                data = dev.read(
+                    info.in_endpoint,
                     length,
                     timeout=timeout,
                 )
                 return bytes(data)
         except Exception as exc:
+            if usb is not None and isinstance(exc, usb.core.USBTimeoutError):
+                # libusb reports this as "Operation timed out" — the substring
+                # "timeout" is absent, so it must be classified by type.
+                return b""
             if usb is not None and isinstance(exc, usb.core.USBError):
-                if "timeout" in str(exc).lower():
+                # Belt-and-suspenders: some backends surface a timeout as a plain
+                # USBError with errno 110 (Linux ETIMEDOUT) / 10060 (WinUSB).
+                if getattr(exc, "errno", None) in (110, 10060):
                     return b""
                 logger.error("USB read error: %s", exc)
-                self._release()
-                self.state = DISCONNECTED
+                self._teardown()
                 raise ConnectionError(str(exc)) from exc
             raise
 
@@ -182,8 +201,7 @@ class UsbLink:
 
     def disconnect(self) -> None:
         """Release the device and go to DISCONNECTED."""
-        self._release()
-        self.state = DISCONNECTED
+        self._teardown()
 
     # ------------------------------------------------------------------
     # Internal
@@ -209,6 +227,20 @@ class UsbLink:
                 self.state = ERROR_FATAL
                 return
 
+            # On Linux a kernel driver may be bound to the interface; detach it
+            # first or claim_interface fails with EBUSY.  (Windows uses WinUSB,
+            # which has no kernel driver to detach.)
+            if os.name != "nt":
+                try:
+                    if self.dev.is_kernel_driver_active(info.vendor_interface):
+                        self.dev.detach_kernel_driver(info.vendor_interface)
+                        logger.info(
+                            "Detached kernel driver from interface %d.",
+                            info.vendor_interface,
+                        )
+                except (NotImplementedError, usb.core.USBError) as exc:
+                    logger.debug("Kernel driver detach skipped: %s", exc)
+
             # Claim the interface
             try:
                 usb.util.claim_interface(self.dev, info.vendor_interface)
@@ -225,8 +257,7 @@ class UsbLink:
         except Exception as exc:
             if usb is not None and isinstance(exc, usb.core.USBError):
                 logger.error("USB error during connect: %s", exc)
-                self._release()
-                self.state = DISCONNECTED
+                self._teardown()
             else:
                 raise
 
@@ -297,15 +328,29 @@ class UsbLink:
         )
 
     def _device_present(self) -> bool:
-        if self.dev is None:
-            return False
-        if usb is None:
+        # Snapshot: a concurrent teardown may null ``dev`` between the check and
+        # the transfer below.  Any failure (USBError, or AttributeError if it was
+        # nulled) means "not present".
+        dev = self.dev
+        if dev is None or usb is None:
             return False
         try:
-            _ = self.dev.get_active_configuration()
+            _ = dev.get_active_configuration()
             return True
-        except usb.core.USBError:
+        except Exception:
             return False
+
+    def _teardown(self) -> None:
+        """Release the device and mark DISCONNECTED, once, thread-safely.
+
+        Both the main-loop and input-listener threads can hit an error path at
+        the same time; the lock ensures only one performs the release.
+        """
+        with self._state_lock:
+            if self.state == DISCONNECTED and self.dev is None:
+                return
+            self._release()
+            self.state = DISCONNECTED
 
     def _release(self) -> None:
         if self.dev is not None and self.info is not None:
