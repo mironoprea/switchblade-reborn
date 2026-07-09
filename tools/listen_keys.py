@@ -27,6 +27,11 @@ def main() -> int:
         return 1
 
     link.mark_ready()
+    if link.info is not None and link.info.in_endpoint is None:
+        print("No vendor bulk IN endpoint was discovered; key events likely use HID.")
+        link.disconnect()
+        return 1
+
     print("Listening for key events (Ctrl+C to stop)...")
     try:
         while True:

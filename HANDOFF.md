@@ -62,9 +62,12 @@ The Razer DeathStalker Ultimate presents as a USB composite device with these in
 | 0 (alt)   | 0x00    | 0x00     | 0x00     | Interrupt IN 0x81 (64 bytes)           | Alternate setting     |
 | 1         | 0x03    | 0x00     | 0x01     | Interrupt IN 0x82 (16 bytes)           | HID media/consumer    |
 | 2         | 0x03    | 0x01     | 0x01     | Interrupt IN 0x83 (8 bytes)            | HID system control    |
-| 3         | 0xFF    | 0xF0     | 0x00     | Bulk OUT 0x01 (512), Bulk IN 0x02 (512)| Switchblade UI        |
+| 3         | 0xFF    | 0xF0     | 0x00     | Bulk OUT 0x01 (512), Bulk OUT 0x02 (512), no bulk IN observed | Switchblade UI |
 
-Key finding: Interface 3 is the vendor-specific interface with bulk endpoints 0x01 (OUT) and 0x02 (IN), exactly as the protocol code expects (BULK_OUT_EP = 0x01, BULK_IN_EP = 0x02 in app/protocol.py).
+Key finding: Interface 3 is the vendor-specific interface. Live enumeration on
+2026-07-09 reports two bulk OUT endpoints, 0x01 and 0x02, with no vendor bulk IN
+endpoint. UsbLink now prefers 0x01 for blits when multiple OUT endpoints are
+present and treats missing vendor IN as no vendor-input path.
 
 Instance ID: USB\VID_1532&PID_0114&MI_03\6&3b17fa3&0&0003
 
@@ -84,7 +87,7 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 104 tests pass.
+- The protocol layer, renderer, profile validation, web UI, and all 116 tests pass.
 - The only thing preventing the keyboard from working is the driver binding on interface 3.
 
 ---
@@ -134,7 +137,10 @@ FxChiP/rzswitchblade source was mined (Section H.1 of IMPLEMENTATION_PLAN). The 
 The code assumes keys are laid out at y=480 (below the screen) in a virtual framebuffer, each 115x115 pixels. PROTOCOL.md says this is a hypothesis — a different opcode or addressing scheme may be needed. Needs a USB capture of Synapse assigning key images.
 
 ### 5.3 Key Event Format [UNKNOWN]
-parse_key_event() implements two hypotheses (1-indexed byte + flag, or bitmask). The actual format is unknown. Needs a capture of pressing the LCD keys while Synapse runs.
+Live enumeration reports no vendor bulk IN endpoint on interface 3, so key events
+likely arrive on one of the HID interrupt IN endpoints. parse_key_event() still
+implements two legacy raw-byte hypotheses (1-indexed byte + flag, or bitmask),
+but the actual format needs a capture of pressing the LCD keys while Synapse runs.
 
 ### 5.4 Pixel Endian
 RGB565 byte order defaults to big-endian. If colors appear swapped on hardware, switch to little-endian via the endian parameter.
@@ -166,8 +172,8 @@ Diagnostic tools:
 section describes the PR #2 milestone and remains accurate for the hardware state).
 
 Working:
-- Repo builds, all dependencies install, tests pass (110 total post-PR #3; was 104).
-- Device is detected, vendor interface (3) correctly identified with bulk endpoints 0x01/0x02.
+- Repo builds, all dependencies install, tests pass (116 total after HID diagnostic hardening).
+- Device is detected, vendor interface (3) correctly identified with bulk OUT endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
 
@@ -186,7 +192,7 @@ Blocked on hardware (Sections F, G, H.2/H.3, I):
   claim it. Need Zadig (Section F) to bind WinUSB to interface 3 only.
 - After Zadig: hardware bring-up (Section G) — blit test, key events, full daemon run.
 - Key image addressing still [UNKNOWN] — FxChiP only does touchpad blitting.
-- Key event format still [UNKNOWN] — may be on vendor IN endpoint or HID interfaces.
+- Key event format still [UNKNOWN] — likely on HID interfaces because no vendor bulk IN endpoint is exposed.
 - Brightness control still [UNKNOWN] — not present in FxChiP source.
 - USB captures (Section H.2) may still be needed for key addressing + key events, but
   must be done BEFORE Zadig binding (while Razer driver is still active).
@@ -201,8 +207,9 @@ that would have made hardware bring-up fail silently, plus quality cleanup. **No
 of this changes the remaining hardware plan (Zadig → bring-up → captures); it just
 means the code you run after Zadig is now correct where it previously wasn't.**
 
-**Test baseline is now 110 tests: 108 pass + 2 `pyusb`-gated skips** (the 2 skips
-run and pass on CI, which now installs `requirements.txt`). Was 104.
+**Test baseline after PR #3 was 110 tests: 108 pass + 2 `pyusb`-gated skips** (the
+2 skips run and pass on CI, which now installs `requirements.txt`). Current local
+baseline after HID diagnostic hardening is 116 passing tests.
 
 ### Highest-impact fixes (these directly affect bring-up)
 - **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
@@ -245,3 +252,13 @@ run and pass on CI, which now installs `requirements.txt`). Was 104.
 Key-image addressing, key-event format, and brightness are still `[UNKNOWN]`. The
 protocol tightening above is a safer guess, not a confirmed format — resolve these
 via Section G/H on real hardware as originally planned.
+
+---
+
+## 9. Live Hardware Probe Addendum (2026-07-09)
+
+- `tools/listen_hid.py` opens the non-keyboard DeathStalker HID collections and
+  prints raw reports as hex. Use it before Zadig when pressing the LCD keys:
+  `python tools\listen_hid.py`.
+- A 10-second run opened four non-keyboard collections successfully but captured no
+  reports without physical LCD-key presses during the window.

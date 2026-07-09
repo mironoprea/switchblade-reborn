@@ -47,15 +47,18 @@ class DeviceInfo:
     """Describes the discovered vendor interface."""
     vendor_interface: int
     out_endpoint: int
-    in_endpoint: int
+    in_endpoint: Optional[int]
     max_out_packet: int
     max_in_packet: int
 
     def __str__(self) -> str:
+        in_endpoint = (
+            f"0x{self.in_endpoint:02x}" if self.in_endpoint is not None else "none"
+        )
         return (
             f"interface={self.vendor_interface} "
             f"OUT=0x{self.out_endpoint:02x} "
-            f"IN=0x{self.in_endpoint:02x}"
+            f"IN={in_endpoint}"
         )
 
 
@@ -170,6 +173,8 @@ class UsbLink:
         info = self.info
         if dev is None or info is None:
             raise ConnectionError("No device handle")
+        if info.in_endpoint is None:
+            return b""
         try:
             with self._io_lock:
                 data = dev.read(
@@ -277,54 +282,58 @@ class UsbLink:
                 continue
 
             # Find bulk endpoints
-            out_ep = None
-            in_ep = None
+            out_eps = []
+            in_eps = []
             for ep in iface:
                 ep_addr = ep.bEndpointAddress
-                if ep.bmAttributes == 2:  # Bulk transfer type
+                if (ep.bmAttributes & 0x03) == 2:  # Bulk transfer type
                     if ep_addr & 0x80:  # IN direction
-                        in_ep = ep_addr
+                        in_eps.append(ep)
                     else:
-                        out_ep = ep_addr
+                        out_eps.append(ep)
 
-            if out_ep is None and in_ep is None:
+            if not out_eps:
                 continue
 
-            candidates.append((iface, out_ep, in_ep))
+            candidates.append((iface, out_eps, in_eps))
 
         if not candidates:
             return None
 
         # Pick preferred interface if specified
         if self.preferred_interface is not None:
-            for iface, out_ep, in_ep in candidates:
+            for iface, out_eps, in_eps in candidates:
                 if iface.bInterfaceNumber == self.preferred_interface:
-                    return self._build_info(iface, out_ep, in_ep)
+                    return self._build_info(iface, out_eps, in_eps)
 
         # Otherwise pick the first vendor-specific (0xFF) interface, else first
-        for iface, out_ep, in_ep in candidates:
+        for iface, out_eps, in_eps in candidates:
             if iface.bInterfaceClass == 0xFF:
-                return self._build_info(iface, out_ep, in_ep)
+                return self._build_info(iface, out_eps, in_eps)
 
-        iface, out_ep, in_ep = candidates[0]
-        return self._build_info(iface, out_ep, in_ep)
+        iface, out_eps, in_eps = candidates[0]
+        return self._build_info(iface, out_eps, in_eps)
 
     @staticmethod
-    def _build_info(iface, out_ep, in_ep) -> DeviceInfo:
-        max_out = 512
-        max_in = 512
-        for ep in iface:
-            ep_addr = ep.bEndpointAddress
-            if ep_addr == out_ep:
-                max_out = ep.wMaxPacketSize
-            if ep_addr == in_ep:
-                max_in = ep.wMaxPacketSize
+    def _select_endpoint(endpoints, preferred: int):
+        for ep in endpoints:
+            if ep.bEndpointAddress == preferred:
+                return ep
+        return endpoints[0] if endpoints else None
+
+    @classmethod
+    def _build_info(cls, iface, out_eps, in_eps) -> DeviceInfo:
+        out_ep = cls._select_endpoint(out_eps, BULK_OUT_EP)
+        in_ep = cls._select_endpoint(in_eps, BULK_IN_EP)
+        if out_ep is None:
+            raise ValueError("vendor interface has no bulk OUT endpoint")
+
         return DeviceInfo(
             vendor_interface=iface.bInterfaceNumber,
-            out_endpoint=out_ep or BULK_OUT_EP,
-            in_endpoint=in_ep or BULK_IN_EP,
-            max_out_packet=max_out,
-            max_in_packet=max_in,
+            out_endpoint=out_ep.bEndpointAddress,
+            in_endpoint=in_ep.bEndpointAddress if in_ep is not None else None,
+            max_out_packet=out_ep.wMaxPacketSize,
+            max_in_packet=in_ep.wMaxPacketSize if in_ep is not None else 0,
         )
 
     def _device_present(self) -> bool:

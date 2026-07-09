@@ -9,15 +9,15 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | all tests pass (110), profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass (116), profiles valid, libusb backend loads |
 | Code hardening (review) | Done | Transport/actions/web-API bugs fixed in PR #3; see HANDOFF.md §8 |
-| USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, backend injection patched |
+| USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, blit OUT endpoint selection patched |
 | Protocol layer (blit, checksum) | Ported | Header format, opcode, XOR checksum confirmed from FxChiP/rzswitchblade |
 | Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |
 | Driver binding (Zadig) | **Blocked** | Interface 3 still has Razer driver, not WinUSB. Must run Zadig manually. |
 | Hardware bring-up | **Not started** | Requires Zadig first, then blit/key-event testing on real hardware |
 | Key image addressing | Unknown | FxChiP only does touchpad; y=480 hypothesis unconfirmed |
-| Key event format | Unknown | May be vendor IN endpoint or HID; needs capture or hardware test |
+| Key event format | Unknown | Likely HID; live enumeration shows no vendor bulk IN endpoint |
 | Brightness control | Unknown | Not in FxChiP; may need Razer HID feature report |
 | Web UI, profiles, actions, widgets | Working | All functional, covered by tests |
 
@@ -52,6 +52,7 @@ python -m app.cli validate            # Validate profiles.json
 python -m app.cli status              # Show connection state and active profile
 python -m app.cli install-autostart    # Install Windows Task Scheduler autostart
 python -m app.cli uninstall-autostart  # Remove the autostart entry
+python tools\listen_hid.py             # Diagnostic: print raw HID reports
 ```
 
 ## Features
@@ -122,7 +123,8 @@ factory Razer driver (`rzhnet.inf`) owns the interface and must be replaced.
    0, 1, or 2 — those are HID (keyboard, media, system control). Binding WinUSB
    to them will disable your keyboard.
 7. Verify: `python tools\enumerate.py` should list interface 3 as Vendor-specific
-   with bulk EPs 0x01/0x02, without claim errors.
+   with bulk OUT endpoints 0x01/0x02, then the CLI/daemon should claim the
+   interface without the previous `Operation not supported` error.
 
 ### Rollback Procedure
 

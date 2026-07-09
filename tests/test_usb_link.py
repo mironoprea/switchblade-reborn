@@ -10,6 +10,24 @@ from app import usb_link
 usb = usb_link.usb
 
 
+class _Endpoint:
+    def __init__(self, address, max_packet=512, attributes=2):
+        self.bEndpointAddress = address
+        self.wMaxPacketSize = max_packet
+        self.bmAttributes = attributes
+
+
+class _Interface:
+    bInterfaceNumber = 3
+    bInterfaceClass = 0xFF
+
+    def __init__(self, endpoints):
+        self._endpoints = endpoints
+
+    def __iter__(self):
+        return iter(self._endpoints)
+
+
 def _make_link(dev):
     link = usb_link.UsbLink()
     link.state = usb_link.READY
@@ -48,3 +66,24 @@ class TestReadTimeoutClassification:
         with pytest.raises(ConnectionError):
             link.read(length=64, timeout=100)
         assert link.state == usb_link.DISCONNECTED
+
+
+def test_build_info_prefers_canonical_out_endpoint_when_multiple_outs():
+    iface = _Interface([_Endpoint(0x02), _Endpoint(0x01)])
+
+    info = usb_link.UsbLink._build_info(iface, list(iface), [])
+
+    assert info.out_endpoint == 0x01
+    assert info.in_endpoint is None
+    assert str(info) == "interface=3 OUT=0x01 IN=none"
+
+
+def test_read_returns_empty_when_no_vendor_in_endpoint():
+    class _Dev:
+        def read(self, *a, **k):
+            raise AssertionError("read should not be attempted without an IN endpoint")
+
+    link = _make_link(_Dev())
+    link.info.in_endpoint = None
+
+    assert link.read(length=64, timeout=100) == b""
