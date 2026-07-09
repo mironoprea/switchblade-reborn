@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Repo:** https://github.com/mironoprea/switchblade-reborn
-**Branch:** master (PR #2 build fixes, PR #3 code-review hardening, and PR #5 live endpoint/HID hardening merged)
+**Branch:** codex/hardware-capture-handoff (based on master; SDK backend work in progress)
 **Hardware:** Razer DeathStalker Ultimate (VID 0x1532 / PID 0x0114)
 **OS:** Windows 11, Python 3.13.5
 
@@ -334,3 +334,30 @@ via Section G/H on real hardware as originally planned.
      or alternate transfer format.
   4. Re-bind MI_03 to WinUSB with Zadig and port the discovered addressing into
      the daemon.
+
+---
+
+## 12. SDK Display Backend Addendum (2026-07-09)
+
+- USBPcap capture remains blocked on this machine: after installing the USBPcap
+  upper filter and rebooting, only `\\.\USBPcap1` opens, and captures written
+  during SDK rendering contain only the 24-byte pcap header. Roots 2-8 fail with
+  "Couldn't open device - 2". The real key-image USB protocol is therefore still
+  not captured.
+- The Razer SDK path is verified and implemented instead of leaving physical key
+  rendering disabled. `app/sdk_backend.py` builds and runs a persistent 32-bit
+  .NET bridge because `RzSwitchbladeSDK2.dll` is 32-bit and cannot be loaded from
+  the normal 64-bit Python process.
+- `python -m app.cli blit-key 0 profiles\images\key0.png --backend sdk` returned
+  success on the real hardware, and a Motorola ADB photo saved at
+  `captures\phone\sdk-backend-key0.jpg` shows the lower-left physical LCD key
+  changed to the profile image.
+- `python -m app.cli run` now defaults to `--backend auto`. On Windows with the
+  SDK installed, `auto` uses the SDK backend for the touchpad and all ten LCD key
+  images while HID input remains active. Use `--backend usb` to force the direct
+  WinUSB bulk path.
+- Direct WinUSB physical-key image addressing is still unknown. The rejected
+  `y=480` virtual-framebuffer path remains disabled in USB mode.
+- `tools/adb_photo.py` now ignores Android `.thumb` camera sidecars when choosing
+  the newest image to pull.
+- Current local test baseline after this addendum: `148 passed`.

@@ -129,3 +129,55 @@ class TestDaemonInit:
         daemon._render_full_profile()
 
         assert key_blits == []
+
+    def test_prepare_backend_auto_uses_sdk_when_available(self, monkeypatch):
+        class FakeSdkDisplay:
+            def __init__(self):
+                self.started = False
+                self.closed = False
+
+            def start(self):
+                self.started = True
+
+            def close(self):
+                self.closed = True
+
+        monkeypatch.setattr("app.daemon.is_sdk_available", lambda: True)
+        monkeypatch.setattr("app.daemon.SdkDisplayBackend", FakeSdkDisplay)
+
+        daemon = Daemon(web=False)
+
+        assert daemon.prepare_backend() is True
+        assert isinstance(daemon.sdk_display, FakeSdkDisplay)
+        assert daemon.link.is_ready()
+        assert daemon.link.info.in_endpoint is None
+
+    def test_render_full_profile_blits_key_images_with_sdk_backend(self, monkeypatch):
+        class FakeSdkDisplay:
+            def blit_screen_rgb565(self, payload):
+                self.screen_payload = payload
+
+        daemon = Daemon(web=False)
+        daemon.sdk_display = FakeSdkDisplay()
+        daemon.profiles_data = {
+            "version": 1,
+            "active_profile": "default",
+            "settings": {},
+            "auto_switch": {},
+            "profiles": {
+                "default": {
+                    "screen": {"type": "image", "path": "missing.png"},
+                    "keys": [
+                        {"image": None, "label": f"Key {i}", "action": None}
+                        for i in range(10)
+                    ],
+                }
+            },
+        }
+
+        key_blits = []
+        monkeypatch.setattr(daemon, "_blit_key", lambda *args: key_blits.append(args))
+
+        daemon._render_full_profile()
+
+        assert [args[0] for args in key_blits] == list(range(10))

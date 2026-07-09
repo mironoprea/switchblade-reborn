@@ -23,6 +23,7 @@ from typing import Optional
 
 DEFAULT_ADB = "adb"
 DEFAULT_CAMERA_DIR = "/sdcard/DCIM/Camera"
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".heic", ".dng")
 
 
 def run_adb(adb: str, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -40,7 +41,8 @@ def latest_camera_file(adb: str, *, camera_dir: str = DEFAULT_CAMERA_DIR) -> Opt
         return None
     for line in proc.stdout.splitlines():
         name = line.strip()
-        if name:
+        lower = name.lower()
+        if name and ".thumb" not in lower and lower.endswith(IMAGE_EXTENSIONS):
             return name
     return None
 

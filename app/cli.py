@@ -38,6 +38,7 @@ def main() -> int:
     p_run = sub.add_parser("run", help="Start the daemon")
     p_run.add_argument("--profiles", default=str(PROFILES_FILE))
     p_run.add_argument("--interface", type=int, default=None)
+    p_run.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
     p_run.add_argument("--no-web", action="store_true")
 
     # profile
@@ -50,6 +51,7 @@ def main() -> int:
     p_blit_screen.add_argument("image")
     p_blit_screen.add_argument("--profiles", default=str(PROFILES_FILE))
     p_blit_screen.add_argument("--interface", type=int, default=None)
+    p_blit_screen.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
 
     # blit-key
     p_blit_key = sub.add_parser("blit-key", help="Blit image to dynamic key N (0-9)")
@@ -57,6 +59,7 @@ def main() -> int:
     p_blit_key.add_argument("image")
     p_blit_key.add_argument("--profiles", default=str(PROFILES_FILE))
     p_blit_key.add_argument("--interface", type=int, default=None)
+    p_blit_key.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
 
     # validate
     p_validate = sub.add_parser("validate", help="Validate profiles.json")
@@ -103,6 +106,7 @@ def _cmd_run(args) -> int:
     run_daemon(
         profiles_path=args.profiles,
         interface=args.interface,
+        backend=args.backend,
         web=not args.no_web,
     )
     return 0
@@ -128,6 +132,8 @@ def _wait_for_device(daemon) -> bool:
     """
     import time
     from .usb_link import READY, INITIALIZING
+    if not daemon.prepare_backend():
+        return False
     for _ in range(10):
         state = daemon.link.poll()
         if state in (READY, INITIALIZING):
@@ -144,7 +150,12 @@ def _cmd_blit_screen(args) -> int:
     if not os.path.isfile(args.image):
         print(f"Error: image not found: {args.image}", file=sys.stderr)
         return 1
-    daemon = Daemon(args.profiles, interface=args.interface, web=False)
+    daemon = Daemon(
+        args.profiles,
+        interface=args.interface,
+        backend=args.backend,
+        web=False,
+    )
     if not _wait_for_device(daemon):
         print("Error: device not ready", file=sys.stderr)
         return 1
@@ -167,7 +178,12 @@ def _cmd_blit_key(args) -> int:
     if not os.path.isfile(args.image):
         print(f"Error: image not found: {args.image}", file=sys.stderr)
         return 1
-    daemon = Daemon(args.profiles, interface=args.interface, web=False)
+    daemon = Daemon(
+        args.profiles,
+        interface=args.interface,
+        backend=args.backend,
+        web=False,
+    )
     if not _wait_for_device(daemon):
         print("Error: device not ready", file=sys.stderr)
         return 1

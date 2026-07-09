@@ -17,6 +17,7 @@ import signal
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +41,7 @@ from .usb_link import (
     ERROR_FATAL,
 )
 from .widgets import render_widget_board
+from .sdk_backend import SdkBackendError, SdkDisplayBackend, is_sdk_available
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +58,16 @@ class Daemon:
         profiles_path: Optional[str] = None,
         *,
         interface: Optional[int] = None,
+        backend: str = "auto",
         web: bool = True,
     ) -> None:
         self.profiles_path = profiles_path or str(PROFILES_FILE)
         self.profiles_data: dict = {}
+        if backend not in {"auto", "usb", "sdk"}:
+            raise ValueError("backend must be 'auto', 'usb', or 'sdk'")
+        self.backend = backend
         self.link = UsbLink(interface=interface)
+        self.sdk_display: Optional[SdkDisplayBackend] = None
         self.renderer = ScreenRenderer()
         self.input_listener: Optional[InputListener] = None
         self._running = False
@@ -99,6 +106,9 @@ class Daemon:
             sys.exit(1)
 
         self._current_profile_name = self.profiles_data.get("active_profile", "default")
+        if not self.prepare_backend():
+            logger.error("Display backend could not be prepared.")
+            sys.exit(1)
 
         # Signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -119,6 +129,34 @@ class Daemon:
 
         logger.info("Daemon started. Active profile: %s", self._current_profile_name)
         self._main_loop()
+
+    def prepare_backend(self) -> bool:
+        """Select and initialize the display backend.
+
+        ``auto`` prefers the official Windows SDK when present.  That path is
+        the only verified way to update the separate physical LCD keys while
+        the Razer driver owns the vendor interface.  ``usb`` keeps the direct
+        WinUSB bulk path for environments where interface 3 is bound to WinUSB.
+        """
+        if self.sdk_display is not None:
+            return True
+        if self.backend in {"auto", "sdk"} and is_sdk_available():
+            try:
+                self.sdk_display = SdkDisplayBackend()
+                self.sdk_display.start()
+                self.link = _HidOnlyLink()
+                logger.info("Display backend: Razer SwitchBlade SDK.")
+                return True
+            except SdkBackendError as exc:
+                logger.warning("SDK backend unavailable: %s", exc)
+                self.sdk_display = None
+                if self.backend == "sdk":
+                    return False
+        if self.backend == "sdk":
+            logger.error("Razer SwitchBlade SDK is not available.")
+            return False
+        logger.info("Display backend: direct USB.")
+        return True
 
     def _start_web(self) -> None:
         try:
@@ -237,18 +275,25 @@ class Daemon:
 
         result = self.renderer.update(fb)
         if result is not None:
-            rect, payload = result
-            self._blit_rect(rect, payload)
+            if self.sdk_display is not None:
+                try:
+                    self.sdk_display.blit_screen_rgb565(fb)
+                except SdkBackendError as exc:
+                    logger.debug("SDK screen blit failed: %s", exc)
+            else:
+                rect, payload = result
+                self._blit_rect(rect, payload)
 
     def _render_all_keys(self) -> None:
-        """Skip unconfirmed key-image blits.
-
-        Hardware testing showed the old ``y=480`` key-image hypothesis writes
-        onto the main touch LCD instead of separate key displays.  The key image
-        fields remain useful for profile metadata and the web UI, but physical
-        key rendering is disabled until captures reveal a real address scheme.
-        """
-        logger.debug("Skipping key-image blits; hardware addressing is unconfirmed.")
+        """Render dynamic key images when the active backend supports them."""
+        if self.sdk_display is None:
+            logger.debug("Skipping key-image blits; direct USB addressing is unconfirmed.")
+            return
+        profile = profiles_mod.get_active_profile(self.profiles_data)
+        keys = profile.get("keys", [])
+        for key_index in range(protocol.KEY_COUNT):
+            key_config = keys[key_index] if key_index < len(keys) else None
+            self._render_key(key_index, key_config)
 
     def _render_key(self, key_index: int, key_config: Optional[dict]) -> None:
         image_path = key_config.get("image") if key_config else None
@@ -277,6 +322,12 @@ class Daemon:
             logger.debug("Blit failed (device may have disconnected): %s", exc)
 
     def _blit_key(self, key_index: int, rgb565: bytes) -> None:
+        if self.sdk_display is not None:
+            try:
+                self.sdk_display.blit_key_rgb565(key_index, rgb565)
+            except SdkBackendError as exc:
+                logger.debug("SDK key blit failed: %s", exc)
+            return
         packet = protocol.build_key_blit(key_index, rgb565)
         try:
             self._write_blit_packet(packet)
@@ -401,6 +452,13 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def blit_screen(self, image_path: str) -> None:
+        if self.sdk_display is not None:
+            try:
+                self.sdk_display.blit_screen_image(image_path)
+            except SdkBackendError as exc:
+                raise ConnectionError(str(exc)) from exc
+            logger.info("SDK screen blit complete: %s", image_path)
+            return
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
@@ -410,6 +468,13 @@ class Daemon:
         logger.info("Screen blit complete: %s", image_path)
 
     def blit_key(self, key_index: int, image_path: str) -> None:
+        if self.sdk_display is not None:
+            try:
+                self.sdk_display.blit_key_image(key_index, image_path)
+            except SdkBackendError as exc:
+                raise ConnectionError(str(exc)) from exc
+            logger.info("SDK key blit complete: key=%d image=%s", key_index, image_path)
+            return
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
@@ -451,6 +516,8 @@ class Daemon:
             self.input_listener.stop()
         if self._auto_switcher:
             self._auto_switcher.stop()
+        if self.sdk_display:
+            self.sdk_display.close()
         # Web UI runs as daemon thread - it will be killed when the process exits
         self.link.disconnect()
         logger.info("Shutdown complete.")
@@ -460,6 +527,7 @@ def run_daemon(
     profiles_path: Optional[str] = None,
     *,
     interface: Optional[int] = None,
+    backend: str = "auto",
     web: bool = True,
 ) -> None:
     """Entry point: create and start the daemon."""
@@ -467,5 +535,29 @@ def run_daemon(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    daemon = Daemon(profiles_path, interface=interface, web=web)
+    daemon = Daemon(profiles_path, interface=interface, backend=backend, web=web)
     daemon.start()
+
+
+class _HidOnlyLink:
+    """Minimal ready link used when the SDK owns display output.
+
+    The dynamic LCD key events are HID reports, so the existing InputListener can
+    keep polling those collections as long as the link looks READY and has no
+    bulk IN endpoint.
+    """
+
+    state = READY
+    info = SimpleNamespace(in_endpoint=None)
+
+    def poll(self) -> str:
+        return READY
+
+    def is_ready(self) -> bool:
+        return True
+
+    def mark_ready(self) -> None:
+        return
+
+    def disconnect(self) -> None:
+        return

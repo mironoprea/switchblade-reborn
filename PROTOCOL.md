@@ -98,21 +98,26 @@ Header bytes:
 03 C1   # checksum = 0x0001 ^ 0x0000 ^ 0x01E0 ^ 0x0072 ^ 0x0252 = 0x03C1
 ```
 
-## Key image addressing
+## Key image rendering
 
-**[REJECTED hypothesis / UNKNOWN replacement]** The exact addressing of dynamic key
-images is not yet confirmed. Hardware testing showed the old virtual-framebuffer
-hypothesis (`y = 480`, one 115×115 region per key) writes onto the main touch LCD
-instead of separate physical key displays. The daemon therefore does **not** blit
-profile key images to hardware keys by default.
+**[CONFIRMED via Razer SDK backend]** Physical LCD key images render correctly
+through the official Razer SwitchBlade SDK. The Python app uses a persistent
+32-bit .NET bridge process (`app/sdk_backend.py`) because the installed SDK DLL is
+32-bit. `--backend auto` selects this path when the SDK is installed, and
+`--backend sdk` forces it.
+
+**[REJECTED hypothesis / UNKNOWN direct USB replacement]** The exact direct USB
+addressing of dynamic key images is not yet confirmed. Hardware testing showed
+the old virtual-framebuffer hypothesis (`y = 480`, one 115x115 region per key)
+writes onto the main touch LCD instead of separate physical key displays. The
+daemon therefore does **not** blit profile key images through the direct USB
+backend.
 FxChiP/rzswitchblade only implements touchpad blitting (`rzswitchblade_blit_tp_sync`);
 no key-image addressing code exists in that library.
 
 Remaining hypotheses:
 
 1. A different opcode, endpoint, report, or mode is used for physical key images.
-2. The physical key backlights may not be individually addressable as full images
-   on this DeathStalker Ultimate firmware path.
 
 **[PORTED from FxChiP/rzswitchblade]** The FxChiP README states each "macro button"
 can hold a **116×116** icon (not 115×115). The current code uses 115; if key

@@ -13,6 +13,16 @@ def test_latest_camera_file_returns_first_nonempty(monkeypatch):
     assert adb_photo.latest_camera_file("adb") == "IMG_new.jpg"
 
 
+def test_latest_camera_file_skips_thumbnail_sidecars(monkeypatch):
+    class _Proc:
+        returncode = 0
+        stdout = "IMG_new.thumb.jpg\nIMG_new.jpg\n"
+
+    monkeypatch.setattr(adb_photo, "run_adb", lambda *a, **k: _Proc())
+
+    assert adb_photo.latest_camera_file("adb") == "IMG_new.jpg"
+
+
 def test_resolve_adb_uses_explicit_path():
     assert adb_photo.resolve_adb("C:/tools/adb.exe") == "C:/tools/adb.exe"
 

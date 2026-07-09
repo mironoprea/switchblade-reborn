@@ -9,14 +9,15 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | all tests pass (136), profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass (148), profiles valid, libusb backend loads |
 | Code hardening (review) | Done | Transport/actions/web-API bugs fixed in PR #3; see HANDOFF.md §8 |
 | USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, blit OUT endpoint selection patched |
 | Protocol layer (blit, checksum) | Working | Header/checksum confirmed; screen blits use little-endian RGB565 and header+single-payload transfers |
 | Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |
-| Driver binding (Zadig) | Done | Interface 3 bound to WinUSB with Zadig |
-| Hardware bring-up | Partial | Main LCD renders; physical key events captured over HID; hotplug reconnect verified |
-| Key image addressing | Unknown | y=480 hypothesis rejected; daemon key-image blits disabled |
+| Display backends | Working | `auto` uses the Razer SDK backend when available; `usb` keeps the direct WinUSB bulk path |
+| Driver binding (Zadig) | Optional by backend | Required only for `--backend usb`; the SDK backend works with the Razer driver |
+| Hardware bring-up | Working via SDK backend | Main LCD + physical LCD key images render; physical key events captured over HID |
+| Direct USB key image addressing | Unknown | y=480 hypothesis rejected; direct WinUSB key-image blits remain disabled |
 | Key event format | Working | Physical LCD keys report over HID as `04 50`..`04 59`, release `04 00` |
 | Brightness control | Unknown | Not in FxChiP; may need Razer HID feature report |
 | Web UI, profiles, actions, widgets | Working | All functional, covered by tests |
@@ -35,7 +36,8 @@ pip install -r requirements.txt
 # Validate your profiles
 python -m app.cli validate
 
-# Start the daemon (screen + keys + web UI)
+# Start the daemon (screen + keys + web UI).
+# On Windows with the Razer SDK installed, auto uses the SDK backend.
 python -m app.cli run
 ```
 
@@ -47,7 +49,7 @@ The web UI is available at `http://127.0.0.1:8377`.
 python -m app.cli run                 # Start the daemon (screen, keys, web UI)
 python -m app.cli profile <name>      # Switch active profile
 python -m app.cli blit-screen <image>  # Blit an image to the trackpad screen
-python -m app.cli blit-key <N> <img>   # Disabled until key-image addressing is known
+python -m app.cli blit-key <N> <img>   # Uses SDK backend in auto/sdk mode
 python -m app.cli validate            # Validate profiles.json
 python -m app.cli status              # Show connection state and active profile
 python -m app.cli install-autostart    # Install Windows Task Scheduler autostart
@@ -58,10 +60,22 @@ python tools\capture_usbpcap.py --name 02-set-key-image  # Capture USBPcap roots
 python tools\analyze_capture.py captures\02-set-key-image-usbpcap6.pcap
 ```
 
+### Display Backends
+
+`--backend auto` is the default. On Windows, if
+`C:\ProgramData\Razer\SwitchBlade\SDK\RzSwitchbladeSDK2.dll` is installed, the app
+starts a persistent 32-bit SDK bridge and renders both the 800x480 touchpad and
+all ten physical LCD keys through the official Razer SDK. This is the verified
+path on the current hardware.
+
+Use `--backend usb` only when interface 3 (`MI_03`) is bound to WinUSB and you
+want the direct bulk protocol path. That path renders the main touch LCD, but
+direct physical-key image addressing is still unknown and intentionally disabled.
+
 ## Features
 
-- **Trackpad screen**: display any image on the 800×480 LCD via the USB blit protocol.
-- **Physical LCD keys**: key presses are read over HID and can trigger actions.
+- **Trackpad screen**: display any image on the 800×480 LCD.
+- **Physical LCD keys**: images render through the SDK backend; key presses are read over HID and can trigger actions.
 - **Actions**: launch apps, inject keyboard shortcuts, control media, switch profiles.
 - **Profiles**: named sets of key images + actions, switchable at runtime.
 - **Web UI**: edit profiles, upload images, switch profiles from your browser.
@@ -112,9 +126,9 @@ Widget types: `clock`, `cpu_ram`, `media_now_playing`.
 
 ## Driver Setup (Zadig)
 
-The Switchblade vendor interface (**interface 3**, class 0xFF) must be bound to
-WinUSB so pyusb can access it. On the current test machine this is already done
-with Zadig, and Device Manager shows MI_03 using the WinUSB service.
+The direct USB backend requires the Switchblade vendor interface (**interface 3**,
+class 0xFF) to be bound to WinUSB so pyusb can access it. The default SDK backend
+does not require this; it expects MI_03 to use the original Razer driver.
 
 1. Fully exit Razer Synapse and kill `Rz*` processes.
 2. Download [Zadig](https://zadig.akeo.ie/) and run as Administrator.
@@ -148,6 +162,7 @@ app/
   profiles.py        # Profile schema validation and management
   actions.py         # Execute action dicts (launch, keys, media, profile)
   usb_link.py        # USB transport: find/claim/reconnect
+  sdk_backend.py     # Windows SDK display bridge for touchpad + LCD keys
   input_listener.py  # Read key events, dispatch callbacks
   widgets.py         # Screen widgets (clock, CPU/RAM, now-playing)
   auto_switch.py     # Auto profile switch by foreground app

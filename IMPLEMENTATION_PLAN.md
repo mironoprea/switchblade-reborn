@@ -48,14 +48,14 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2, PR #3, and PR #5 merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 136 tests pass, profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 148 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | — | Live endpoint/HID hardening + Fable review blocker | **Done** — PR #5; no vendor IN endpoint, HID diagnostic added, InputListener no-IN busy-spin fixed |
 | F | Bind WinUSB via Zadig | **Done** — interface 3 / MI_03 bound to WinUSB via Zadig |
-| G | Hardware bring-up (blit test, keys) | **Partial** — main LCD renders, HID key events captured, hotplug reconnect verified, physical key-image addressing unresolved |
-| H.2 | USB captures (if needed) | **Prepared** — USBPcap installed and capture/analyze tools added; reboot required before filter devices become available |
+| G | Hardware bring-up (blit test, keys) | **Done via SDK backend** — main LCD renders, physical LCD key images render through SDK, HID key events captured, hotplug reconnect verified |
+| H.2 | USB captures (if needed) | **Blocked/Prepared** — USBPcap tooling exists, but only `\\.\USBPcap1` opens and captures no keyboard traffic on this host |
 | H.3 | Key-event format resolution | **Done for physical keys** — HID reports `04 50`..`04 59`, release `04 00`; key-image addressing still unresolved |
-| I | Final acceptance checklist | **Not started** — requires all above |
+| I | Final acceptance checklist | **Partial** — SDK backend satisfies runtime key-image rendering; direct USB key-image wire protocol and brightness remain unknown |
 
 **FxChiP findings (H.1):** Header format (6 × big-endian uint16, opcode 0x0001, XOR
 checksum) confirmed matching. Rectangle is inclusive. No init sequence needed (claim
@@ -538,17 +538,18 @@ The keyboard is "actually running" when all of these pass:
 
 - [x] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk OUT EPs 0x01/0x02 (WinUSB bound).
 - [x] `python tools\blit_test.py <image>` renders the image on the trackpad LCD with correct colors.
-- [ ] A key-image blit renders on the correct dynamic key at the correct position. Current y=480 hypothesis is rejected.
+- [x] A key-image blit renders on the correct dynamic key at the correct position via `--backend sdk`.
+      Current direct-USB y=480 hypothesis is rejected and remains disabled.
 - [x] Pressing an LCD key produces a parsed `KeyEvent` (via HID per H.3) and triggers its
       configured action.
 - [x] `python -m app.cli run` reaches `READY`, renders the active profile's screen, and the
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
 - [x] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [x] All tests still pass (`python -m pytest tests/ -q`; currently 136 pass),
+- [x] All tests still pass (`python -m pytest tests/ -q`; currently 148 pass),
       plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
-      `[CONFIRMED]` or `[PORTED …]`.
+      `[CONFIRMED]` or `[PORTED …]`. Direct USB key-image addressing and brightness remain unresolved.
 
 ---
 
