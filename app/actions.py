@@ -119,16 +119,22 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_EXTENDEDKEY = 0x0001
 
-# ULONG_PTR — pointer-sized unsigned integer (the correct type for dwExtraInfo).
+# Win32 DWORD/WORD/LONG are fixed 32/16/32-bit regardless of OS.  Using
+# ctypes.c_ulong would be wrong off-Windows (it's 64-bit under LP64), so use
+# fixed-width types — the struct is then a deterministic 40 bytes on any x64.
+# ULONG_PTR is pointer-sized (the correct type for dwExtraInfo).
+DWORD = ctypes.c_uint32
+WORD = ctypes.c_uint16
+LONG = ctypes.c_int32
 ULONG_PTR = ctypes.c_size_t
 
 
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
-        ("wVk", ctypes.c_ushort),
-        ("wScan", ctypes.c_ushort),
-        ("dwFlags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
+        ("wVk", WORD),
+        ("wScan", WORD),
+        ("dwFlags", DWORD),
+        ("time", DWORD),
         ("dwExtraInfo", ULONG_PTR),
     ]
 
@@ -136,20 +142,20 @@ class _KEYBDINPUT(ctypes.Structure):
 class _MOUSEINPUT(ctypes.Structure):
     # Present only so the union sizes to the largest member (as the OS expects).
     _fields_ = [
-        ("dx", ctypes.c_long),
-        ("dy", ctypes.c_long),
-        ("mouseData", ctypes.c_ulong),
-        ("dwFlags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
+        ("dx", LONG),
+        ("dy", LONG),
+        ("mouseData", DWORD),
+        ("dwFlags", DWORD),
+        ("time", DWORD),
         ("dwExtraInfo", ULONG_PTR),
     ]
 
 
 class _HARDWAREINPUT(ctypes.Structure):
     _fields_ = [
-        ("uMsg", ctypes.c_ulong),
-        ("wParamL", ctypes.c_ushort),
-        ("wParamH", ctypes.c_ushort),
+        ("uMsg", DWORD),
+        ("wParamL", WORD),
+        ("wParamH", WORD),
     ]
 
 
@@ -164,7 +170,7 @@ class _INPUTUNION(ctypes.Union):
 class INPUT(ctypes.Structure):
     _anonymous_ = ("u",)
     _fields_ = [
-        ("type", ctypes.c_ulong),
+        ("type", DWORD),
         ("u", _INPUTUNION),
     ]
 
