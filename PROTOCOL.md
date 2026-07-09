@@ -13,7 +13,7 @@ source.  Update this file when hardware captures reveal new information.
 | 0 | 0x03 (HID) | 0x01 | 0x02 | Interrupt IN 0x81 (8B) | Standard keyboard |
 | 1 | 0x03 (HID) | 0x00 | 0x01 | Interrupt IN 0x82 (16B) | HID media/consumer |
 | 2 | 0x03 (HID) | 0x01 | 0x01 | Interrupt IN 0x83 (8B) | HID system control |
-| 3 | 0xFF (Vendor) | 0xF0 | 0x00 | Bulk OUT 0x01 (512), Bulk IN 0x02 (512) | Switchblade UI |
+| 3 | 0xFF (Vendor) | 0xF0 | 0x00 | Bulk OUT 0x01 (512), Bulk OUT 0x02 (512), no bulk IN observed | Switchblade UI |
 
 The vendor interface (class 0xFF) must be bound to WinUSB via Zadig.
 HID interfaces (class 0x03) must NOT be touched.
@@ -117,9 +117,12 @@ A USB capture of Synapse assigning key images resolves this.
 
 ## Key events
 
-**[UNKNOWN]** Key press events are expected on the vendor IN endpoint (0x02).
-The exact packet format is unknown.  Two hypotheses implemented in
-`protocol.parse_key_event()`:
+**[UNKNOWN]** Key press events are not yet confirmed. Live enumeration on
+2026-07-09 showed no vendor bulk IN endpoint on interface 3; endpoint `0x02`
+is reported as a second bulk OUT endpoint, so LCD-key events likely arrive on
+one of the HID interrupt IN endpoints instead. The exact packet format is
+unknown.  Two legacy vendor-packet hypotheses are still implemented in
+`protocol.parse_key_event()` for captures that do produce raw key bytes:
 
 1. `byte[0]` = key index (1-indexed, 1-10), `byte[1]` = down/up flag.
 2. `byte[0]` = bitmask of pressed keys (bit 0 = key 0, etc.)

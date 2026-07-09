@@ -21,7 +21,9 @@
 >   `pyusb`/`libusb-package`/`hidapi` are present and the transport tests run).
 > - **Your actual next step is Section F (Zadig driver bind).** Everything before
 >   it is complete; the forward plan **F → G → H.2/H.3 → I is still exactly right.**
-> - Test baseline is now **110 tests (108 pass, 2 `pyusb`-gated skips)**, not 104.
+> - Test baseline after PR #3 was **110 tests (108 pass, 2 `pyusb`-gated skips)**,
+>   not 104. A later live hardware-probe hardening pass brings the local baseline
+>   to **114 passing tests**.
 >
 > Sections A–E below are kept for history; read them for context, not as a to-do.
 
@@ -39,7 +41,7 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2 (build fixes) + PR #3 (review hardening) merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 110 tests (108 pass, 2 pyusb-gated skips), profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 114 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware **← fresh agent starts here** |
 | G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |
@@ -126,7 +128,7 @@ topology below and remove the `[SEED]` tag on it (it is now `[CONFIRMED]`):
 | 0 | 0x03 (HID) | 0x01 | 0x02 | Interrupt IN 0x81 (8B) | Standard keyboard |
 | 1 | 0x03 (HID) | 0x00 | 0x01 | Interrupt IN 0x82 (16B) | HID media/consumer |
 | 2 | 0x03 (HID) | 0x01 | 0x01 | Interrupt IN 0x83 (8B) | HID system control |
-| 3 | 0xFF (Vendor) | 0xF0 | 0x00 | Bulk OUT 0x01 (512), Bulk IN 0x02 (512) | Switchblade UI |
+| 3 | 0xFF (Vendor) | 0xF0 | 0x00 | Bulk OUT 0x01 (512), Bulk OUT 0x02 (512), no bulk IN observed | Switchblade UI |
 ```
 
 ### 2.3 Key events may NOT arrive on the vendor IN endpoint (design risk)
@@ -363,7 +365,7 @@ Steps (this is a GUI tool; there is no reliable CLI equivalent for forcing the b
 python tools\enumerate.py
 ```
 Expect it to print all interfaces including `Interface 3: class=Vendor-specific (0xFF)` with
-`Endpoint 0x01 (OUT, bulk, max_pkt=512)` and `Endpoint 0x02 (IN, bulk, max_pkt=512)`. If enumerate prints
+`Endpoint 0x01 (OUT, bulk, max_pkt=512)` and `Endpoint 0x02 (OUT, bulk, max_pkt=512)`. If enumerate prints
 the tree without the previous "Operation not supported" claim error, the bind worked.
 
 **Rollback (if you bound the wrong interface or want Razer back):**
@@ -486,9 +488,9 @@ best first:
 - `02-set-key-image.pcapng`: with capture running, use Synapse to assign a distinct image to one dynamic
   key. The bulk-OUT payload's header reveals the **key-image addressing** (compare the x1/y1/x2/y2 in the
   12-byte header against the `y=480, 115×115` hypothesis).
-- `03-key-press.pcapng`: press each of the 10 LCD keys. Watch **both** the vendor IN endpoint (0x02) AND the
-  HID interrupt IN endpoints (0x81/0x82/0x83). Wherever the bytes change per key press is the **key-event**
-  source and format.
+- `03-key-press.pcapng`: press each of the 10 LCD keys. Watch the HID interrupt IN endpoints
+  (0x81/0x82/0x83), plus any vendor IN endpoint if a capture shows one. Wherever the bytes change per key
+  press is the **key-event** source and format.
 - `04-brightness.pcapng`: change screen brightness in Synapse. The differing transfer is the **brightness**
   command.
 
@@ -500,7 +502,7 @@ confirmed. If not, update `HEADER_FORMAT`, the opcode, or the checksum in `app/p
 ### H.3 Key-event format resolution (the highest-risk unknown)
 Use the bytes from `03-key-press.pcapng` (or from `tools/listen_keys.py` in Section G.4):
 
-- **If events appear on the vendor IN endpoint (0x02):** map the raw bytes to key index + up/down and make
+- **If events appear on a vendor IN endpoint:** map the raw bytes to key index + up/down and make
   `protocol.parse_key_event()` match exactly. The current function tries two hypotheses (1-indexed byte +
   flag, or bitmask); replace the guesswork with the confirmed layout and delete the dead hypothesis. Add a
   unit test in `tests/test_protocol.py` using a real captured packet as the fixture.
@@ -525,7 +527,7 @@ files to `captures/` only if the user wants them retained (they can be large; as
 
 The keyboard is "actually running" when all of these pass:
 
-- [ ] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk EPs 0x01/0x02 (WinUSB bound).
+- [ ] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk OUT EPs 0x01/0x02 (WinUSB bound).
 - [ ] `python tools\blit_test.py <image>` renders the image on the trackpad LCD with correct colors.
 - [ ] A key-image blit renders on the correct dynamic key at the correct position.
 - [ ] Pressing an LCD key produces a parsed `KeyEvent` (via vendor endpoint or HID per H.3) and triggers its
