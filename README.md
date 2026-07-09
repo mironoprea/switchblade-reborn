@@ -9,7 +9,7 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | all tests pass (114), profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass (116), profiles valid, libusb backend loads |
 | Code hardening (review) | Done | Transport/actions/web-API bugs fixed in PR #3; see HANDOFF.md §8 |
 | USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, blit OUT endpoint selection patched |
 | Protocol layer (blit, checksum) | Ported | Header format, opcode, XOR checksum confirmed from FxChiP/rzswitchblade |
@@ -52,6 +52,7 @@ python -m app.cli validate            # Validate profiles.json
 python -m app.cli status              # Show connection state and active profile
 python -m app.cli install-autostart    # Install Windows Task Scheduler autostart
 python -m app.cli uninstall-autostart  # Remove the autostart entry
+python tools\listen_hid.py             # Diagnostic: print raw HID reports
 ```
 
 ## Features

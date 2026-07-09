@@ -23,7 +23,7 @@
 >   it is complete; the forward plan **F → G → H.2/H.3 → I is still exactly right.**
 > - Test baseline after PR #3 was **110 tests (108 pass, 2 `pyusb`-gated skips)**,
 >   not 104. A later live hardware-probe hardening pass brings the local baseline
->   to **114 passing tests**.
+>   to **116 passing tests**.
 >
 > Sections A–E below are kept for history; read them for context, not as a to-do.
 
@@ -41,7 +41,7 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2 (build fixes) + PR #3 (review hardening) merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 114 tests pass, profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 116 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware **← fresh agent starts here** |
 | G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |

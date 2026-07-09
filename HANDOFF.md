@@ -87,7 +87,7 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 114 tests pass.
+- The protocol layer, renderer, profile validation, web UI, and all 116 tests pass.
 - The only thing preventing the keyboard from working is the driver binding on interface 3.
 
 ---
@@ -172,7 +172,7 @@ Diagnostic tools:
 section describes the PR #2 milestone and remains accurate for the hardware state).
 
 Working:
-- Repo builds, all dependencies install, tests pass (114 total after endpoint-selection hardening).
+- Repo builds, all dependencies install, tests pass (116 total after HID diagnostic hardening).
 - Device is detected, vendor interface (3) correctly identified with bulk OUT endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
@@ -209,7 +209,7 @@ means the code you run after Zadig is now correct where it previously wasn't.**
 
 **Test baseline after PR #3 was 110 tests: 108 pass + 2 `pyusb`-gated skips** (the
 2 skips run and pass on CI, which now installs `requirements.txt`). Current local
-baseline after endpoint-selection hardening is 114 passing tests.
+baseline after HID diagnostic hardening is 116 passing tests.
 
 ### Highest-impact fixes (these directly affect bring-up)
 - **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
@@ -252,3 +252,13 @@ baseline after endpoint-selection hardening is 114 passing tests.
 Key-image addressing, key-event format, and brightness are still `[UNKNOWN]`. The
 protocol tightening above is a safer guess, not a confirmed format — resolve these
 via Section G/H on real hardware as originally planned.
+
+---
+
+## 9. Live Hardware Probe Addendum (2026-07-09)
+
+- `tools/listen_hid.py` opens the non-keyboard DeathStalker HID collections and
+  prints raw reports as hex. Use it before Zadig when pressing the LCD keys:
+  `python tools\listen_hid.py`.
+- A 10-second run opened four non-keyboard collections successfully but captured no
+  reports without physical LCD-key presses during the window.
