@@ -8,6 +8,25 @@
 
 ---
 
+> ## ⚠️ FRESH-AGENT START HERE (2026-07-09, PR #3 merged)
+>
+> **All code work through Section E is DONE and on `master`.** Two review passes
+> shipped: PR #2 (build fixes) and PR #3 (transport / input-injection / web-API
+> hardening — see `HANDOFF.md` §8). The `build-fixes` branch is gone.
+>
+> - **Do NOT re-apply Section C** — every edit there is already merged (and later
+>   superseded/extended by PR #3).
+> - **Do NOT follow Section D** — that branch/PR flow is complete.
+> - **Section D's CI note is stale:** CI now installs `requirements.txt` (so
+>   `pyusb`/`libusb-package`/`hidapi` are present and the transport tests run).
+> - **Your actual next step is Section F (Zadig driver bind).** Everything before
+>   it is complete; the forward plan **F → G → H.2/H.3 → I is still exactly right.**
+> - Test baseline is now **110 tests (108 pass, 2 `pyusb`-gated skips)**, not 104.
+>
+> Sections A–E below are kept for history; read them for context, not as a to-do.
+
+---
+
 ## EXECUTION STATUS (updated 2026-07-09)
 
 | Section | Description | Status |
@@ -19,9 +38,10 @@
 | C.3 | Add init-sequence hook | **Done** — `Daemon._initialize_device()` no-op added |
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
-| D | Review, commit, push, PR, merge | **Done** — PR #2 merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 104/104 pass, profiles valid, libusb loads |
-| F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware |
+| D | Review, commit, push, PR, merge | **Done** — PR #2 (build fixes) + PR #3 (review hardening) merged to master |
+| E | Rebuild venv, run tests, validate | **Done** — 110 tests (108 pass, 2 pyusb-gated skips), profiles valid, libusb loads |
+| — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
+| F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware **← fresh agent starts here** |
 | G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |
 | H.2 | USB captures (if needed) | **Not started** — must be done before Section F |
 | H.3 | Key-event format resolution | **Not started** — requires hardware or captures |
@@ -270,10 +290,10 @@ The `build-fixes` branch is currently only on the remote; your local `master` ha
    git push -u origin build-fixes-review
    gh pr create --base master --head build-fixes-review --title "Build fixes + Windows driver bring-up" --body "See IMPLEMENTATION_PLAN.md and HANDOFF.md"
    ```
-7. Merge after CI is green. **Note:** CI (`.github/workflows/ci.yml`) installs only `Pillow numpy psutil
-   flask pytest` (no `pyusb`/`libusb-package`/`hidapi`), so it exercises the pure logic only — `usb_link.py`
-   guards `import usb` with `try/except`, so tests still collect. That is expected; hardware paths are not
-   CI-tested.
+7. Merge after CI is green. **Note (updated PR #3):** CI (`.github/workflows/ci.yml`) now installs the full
+   `requirements.txt` (plus `pytest`), so `pyusb`/`libusb-package`/`hidapi` are present. The transport
+   timeout tests in `tests/test_usb_link.py` run on CI as a result (they skip locally only if `pyusb` is
+   absent). Hardware-dependent paths (claiming the device, real blits) are still not CI-tested.
 
 **Do not** commit the local `venv/` (it is gitignored) or any `captures/*.pcapng` unless asked.
 
@@ -514,7 +534,8 @@ The keyboard is "actually running" when all of these pass:
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
 - [ ] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [ ] All 104 tests still pass (`python -m pytest tests/ -q`), plus any new capture-fixture tests.
+- [ ] All tests still pass (`python -m pytest tests/ -q`; currently 110 — 108 pass + 2 pyusb-gated skips),
+      plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
       `[CONFIRMED]` or `[PORTED …]`.
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Repo:** https://github.com/mironoprea/switchblade-reborn
-**Branch:** master (build-fixes merged via PR #2)
+**Branch:** master (build-fixes merged via PR #2; code-review hardening merged via PR #3 — see §8)
 **Hardware:** Razer DeathStalker Ultimate (VID 0x1532 / PID 0x0114)
 **OS:** Windows 11, Python 3.13.5
 
@@ -162,10 +162,11 @@ Diagnostic tools:
 
 ## 7. Summary for the Advisor
 
-**Last updated:** 2026-07-09 (post IMPLEMENTATION_PLAN execution)
+**Last updated:** 2026-07-09 (post PR #3 code-review hardening — see §8; this
+section describes the PR #2 milestone and remains accurate for the hardware state).
 
 Working:
-- Repo builds, all dependencies install, 104 tests pass.
+- Repo builds, all dependencies install, tests pass (110 total post-PR #3; was 104).
 - Device is detected, vendor interface (3) correctly identified with bulk endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
@@ -189,3 +190,58 @@ Blocked on hardware (Sections F, G, H.2/H.3, I):
 - Brightness control still [UNKNOWN] — not present in FxChiP source.
 - USB captures (Section H.2) may still be needed for key addressing + key events, but
   must be done BEFORE Zadig binding (while Razer driver is still active).
+
+---
+
+## 8. PR #3 — Code Review Hardening (2026-07-09)
+
+A full-codebase review (Fable 5 agent, findings verified against the code before
+applying) landed as PR #3 on top of the PR #2 build fixes. It fixes real bugs
+that would have made hardware bring-up fail silently, plus quality cleanup. **None
+of this changes the remaining hardware plan (Zadig → bring-up → captures); it just
+means the code you run after Zadig is now correct where it previously wasn't.**
+
+**Test baseline is now 110 tests: 108 pass + 2 `pyusb`-gated skips** (the 2 skips
+run and pass on CI, which now installs `requirements.txt`). Was 104.
+
+### Highest-impact fixes (these directly affect bring-up)
+- **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
+  check `"timeout" in str(exc)` never matched libusb's actual message *"Operation
+  timed out"*, so an idle device tore itself down ~100 ms after reaching READY and
+  reconnected forever — rendering could never proceed. Now classified by
+  `usb.core.USBTimeoutError` type (with an errno fallback). **This was the most
+  likely cause of a "connects then dies" symptom after Zadig.**
+- **`keys`/`media` actions were silent no-ops on Windows** (`actions.py`). The
+  SendInput `INPUT` struct was 72 bytes; Windows requires exactly 40 on x64 or it
+  injects nothing. Rewritten with the canonical union + fixed-width fields (40 bytes
+  on any x64), return-value/last-error checks, extended-key flag, and no pywin32
+  dependency (stdlib `ctypes` only).
+- **Cross-thread teardown race** (`usb_link.py`): the input-listener thread could
+  null the device handle while the main loop used it, crashing the daemon with an
+  uncaught `AttributeError`. Teardown + state transitions are now serialized behind
+  a state lock, and read/write/`_device_present` snapshot the handle.
+- **Linux kernel-driver detach** before `claim_interface` (`usb_link.py`) — the
+  reference behaviour that was documented but never implemented.
+
+### Other fixes
+- `cli.py`: `blit-screen`/`blit-key` now accept the `INITIALIZING` state (a fresh
+  connect never reaches READY on its own, so both commands used to always fail with
+  "device not ready"). `install-autostart` now registers `-m app.cli` run from the
+  project dir (the old task ran `cli.py` as a script → broken relative imports).
+- `webui`: `activate`/`PUT` report failure truthfully; image upload is
+  path-traversal-safe (`secure_filename` + containment check); loopback-only Host
+  guard against DNS-rebinding.
+- `daemon.py`: single reentrant render lock across the main-loop / auto-switcher /
+  action / Flask threads; blank (black) key images blitted on profile switch so a
+  previous profile's key image doesn't linger; auto-switch map synced on reload/PUT.
+- `profiles.py`: atomic `save_profiles` (temp file + `os.replace`).
+- `protocol.py`: the bitmask key-event pattern is restricted to single-byte packets
+  (the old bound was always true, so any junk packet was misread as a key press).
+  **Still `[UNKNOWN]` until a real capture (Section H.3) — this only tightens the guess.**
+- `pyproject.toml`: real build backend (`setuptools.build_meta`) + webui package-data.
+- CI installs `requirements.txt`; dead-code/import cleanup; font caching.
+
+### What this does NOT resolve (still open, unchanged)
+Key-image addressing, key-event format, and brightness are still `[UNKNOWN]`. The
+protocol tightening above is a safer guess, not a confirmed format — resolve these
+via Section G/H on real hardware as originally planned.
