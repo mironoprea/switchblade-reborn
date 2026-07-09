@@ -56,6 +56,13 @@ class InputListener:
             if not self._link.is_ready():
                 time.sleep(0.1)
                 continue
+            info = self._link.info
+            if info is not None and info.in_endpoint is None:
+                # No vendor IN endpoint; read() would return instantly, so pace
+                # the loop to avoid busy-spinning a CPU core.  Any key events
+                # arrive over HID, not this path.
+                time.sleep(0.5)
+                continue
             try:
                 data = self._link.read(length=512, timeout=self._read_timeout)
             except ConnectionError:
