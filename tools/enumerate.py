@@ -8,12 +8,18 @@ import sys
 import usb.core
 import usb.util
 
+try:
+    import libusb_package
+    _BACKEND = libusb_package.get_libusb1_backend()
+except Exception:
+    _BACKEND = None
+
 VID = 0x1532
 PID = 0x0114
 
 
 def main() -> int:
-    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    dev = usb.core.find(idVendor=VID, idProduct=PID, backend=_BACKEND)
     if dev is None:
         print(f"No device found for VID=0x{VID:04x} PID=0x{PID:04x}")
         return 1

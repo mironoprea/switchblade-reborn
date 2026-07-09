@@ -21,6 +21,12 @@ try:
 except ImportError:
     usb = None
 
+try:
+    import libusb_package
+    _BACKEND = libusb_package.get_libusb1_backend()
+except Exception:
+    _BACKEND = None
+
 from .protocol import VENDOR_VID, VENDOR_PID, BULK_OUT_EP, BULK_IN_EP
 
 logger = logging.getLogger(__name__)
@@ -187,7 +193,7 @@ class UsbLink:
         self.state = CLAIMING
         logger.info("Device state: CLAIMING")
         try:
-            self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid)
+            self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid, backend=_BACKEND)
             if self.dev is None:
                 logger.debug("Device not found (VID=%04x PID=%04x)", self.vid, self.pid)
                 self.state = DISCONNECTED

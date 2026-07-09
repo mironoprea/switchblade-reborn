@@ -35,6 +35,7 @@ from .usb_link import (
     UsbLink,
     is_synapse_running,
     DISCONNECTED,
+    INITIALIZING,
     READY,
     ERROR_FATAL,
 )
@@ -159,6 +160,9 @@ class Daemon:
             if state == ERROR_FATAL:
                 logger.error("Fatal error. Exiting.")
                 break
+
+            if state == INITIALIZING:
+                self.link.mark_ready()
 
             if state == READY and not self._initialized_device:
                 self._on_device_ready()
