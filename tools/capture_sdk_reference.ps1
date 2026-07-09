@@ -1,6 +1,6 @@
 param(
     [string]$Name = "sdk-key1-touchpad",
-    [int[]]$Roots = @(1, 2, 3, 4, 5, 6, 7, 8),
+    [string[]]$Roots = @("1", "2", "3", "4", "5", "6", "7", "8"),
     [int[]]$Keys = @(1),
     [int]$HoldSeconds = 10,
     [switch]$AllKeys,
@@ -13,6 +13,25 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+
+function Convert-RootList {
+    param([string[]]$Values)
+
+    $result = @()
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split "[,\s]+")) {
+            if (-not $part) {
+                continue
+            }
+            $root = 0
+            if (-not [int]::TryParse($part, [ref]$root)) {
+                throw "Invalid USBPcap root '$part'"
+            }
+            $result += $root
+        }
+    }
+    return $result
+}
 
 if (-not $ProjectDir) {
     $ProjectDir = Split-Path -Parent $PSScriptRoot
@@ -27,11 +46,12 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 Start-Transcript -Path $Log -Force
 
 try {
+    $RootNumbers = Convert-RootList $Roots
     Write-Host "Working directory: $(Get-Location)"
-    Write-Host "Starting USBPcap captures for roots: $($Roots -join ', ')"
+    Write-Host "Starting USBPcap captures for roots: $($RootNumbers -join ', ')"
 
     $procs = @()
-    foreach ($root in $Roots) {
+    foreach ($root in $RootNumbers) {
         $out = Join-Path $OutputDir ("{0}-usbpcap{1}.pcap" -f $Name, $root)
         $stdout = Join-Path $OutputDir ("{0}-usbpcap{1}.out" -f $Name, $root)
         $stderr = Join-Path $OutputDir ("{0}-usbpcap{1}.err" -f $Name, $root)
