@@ -9,7 +9,7 @@ No Razer login, no cloud, no Synapse process required.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Build & tests | Working | 104/104 tests pass, profiles valid, libusb backend loads |
+| Build & tests | Working | all tests pass, profiles valid, libusb backend loads |
 | USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, backend injection patched |
 | Protocol layer (blit, checksum) | Ported | Header format, opcode, XOR checksum confirmed from FxChiP/rzswitchblade |
 | Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |

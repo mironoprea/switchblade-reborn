@@ -3,7 +3,7 @@ Command-line interface: `python -m app.cli <command>`
 
 Commands:
   run                Start the daemon
-  profile <name>    Switch active profile (writes to profiles.json + live switch)
+  profile <name>    Switch active profile (writes profiles.json; takes effect on daemon restart)
   blit-screen <img>  Blit an image to the trackpad screen
   blit-key <N> <img> Blit an image to dynamic key N (0-9)
   validate           Validate profiles.json
@@ -120,25 +120,41 @@ def _cmd_profile(args) -> int:
         return 1
 
 
+def _wait_for_device(daemon) -> bool:
+    """Poll until the link reaches READY/INITIALIZING, then mark it READY.
+
+    A fresh connect parks the link in INITIALIZING (nothing calls mark_ready
+    outside the daemon loop), so we must accept that state too.
+    """
+    import time
+    from .usb_link import READY, INITIALIZING
+    for _ in range(10):
+        state = daemon.link.poll()
+        if state in (READY, INITIALIZING):
+            break
+        time.sleep(0.5)
+    if daemon.link.state not in (READY, INITIALIZING):
+        return False
+    daemon.link.mark_ready()
+    return True
+
+
 def _cmd_blit_screen(args) -> int:
     from .daemon import Daemon
     if not os.path.isfile(args.image):
         print(f"Error: image not found: {args.image}", file=sys.stderr)
         return 1
     daemon = Daemon(args.profiles, interface=args.interface, web=False)
-    daemon.link.poll()
-    import time
-    for _ in range(10):
-        if daemon.link.is_ready():
-            break
-        daemon.link.poll()
-        time.sleep(0.5)
-    if not daemon.link.is_ready():
+    if not _wait_for_device(daemon):
         print("Error: device not ready", file=sys.stderr)
         return 1
-    daemon.link.mark_ready()
-    daemon.blit_screen(args.image)
-    daemon.link.disconnect()
+    try:
+        daemon.blit_screen(args.image)
+    except ConnectionError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        daemon.link.disconnect()
     return 0
 
 
@@ -152,19 +168,16 @@ def _cmd_blit_key(args) -> int:
         print(f"Error: image not found: {args.image}", file=sys.stderr)
         return 1
     daemon = Daemon(args.profiles, interface=args.interface, web=False)
-    daemon.link.poll()
-    import time
-    for _ in range(10):
-        if daemon.link.is_ready():
-            break
-        daemon.link.poll()
-        time.sleep(0.5)
-    if not daemon.link.is_ready():
+    if not _wait_for_device(daemon):
         print("Error: device not ready", file=sys.stderr)
         return 1
-    daemon.link.mark_ready()
-    daemon.blit_key(args.key, args.image)
-    daemon.link.disconnect()
+    try:
+        daemon.blit_key(args.key, args.image)
+    except ConnectionError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        daemon.link.disconnect()
     return 0
 
 
@@ -202,13 +215,16 @@ def _cmd_install_autostart() -> int:
         import sys as _sys
 
         exe = _sys.executable
-        script = str(Path(__file__).resolve().parent / "cli.py")
-        cmd = f'"{exe}" "{script}" run'
+        base = str(BASE_DIR)
+        # Task Scheduler runs with cwd=System32, and `cli.py` can't be run as a
+        # bare script (its relative imports need the package).  So cd into the
+        # project dir and launch via `-m app.cli`.
+        run_cmd = f'cmd /c "pushd "{base}" && "{exe}" -m app.cli run"'
         result = subprocess.run(
             [
                 "schtasks", "/Create",
                 "/TN", "SwitchbladeReborn",
-                "/TR", cmd,
+                "/TR", run_cmd,
                 "/SC", "ONLOGON",
                 "/RL", "LIMITED",
                 "/F",
@@ -217,6 +233,7 @@ def _cmd_install_autostart() -> int:
         )
         if result.returncode == 0:
             print("Autostart task installed.")
+            print(f"  Command: {run_cmd}")
             return 0
         else:
             print(f"Failed: {result.stderr}", file=sys.stderr)

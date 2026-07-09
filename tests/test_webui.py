@@ -38,11 +38,12 @@ def make_mock_daemon():
         "profiles": ["default", "media"],
     }
     daemon.save_profiles.return_value = None
+    daemon.put_profiles.return_value = None
 
+    # Mirror the real Daemon.switch_profile contract: returns True on success,
+    # False for an unknown profile (it never raises).
     def _switch_profile(name):
-        if name not in daemon.profiles_data["profiles"]:
-            from app.profiles import ProfileError
-            raise ProfileError(f"Profile '{name}' not found.")
+        return name in daemon.profiles_data["profiles"]
     daemon.switch_profile.side_effect = _switch_profile
     daemon.link.is_ready.return_value = False
     daemon.renderer.force_full_redraw.return_value = None
@@ -50,7 +51,10 @@ def make_mock_daemon():
 
 
 @pytest.fixture
-def client():
+def client(tmp_path, monkeypatch):
+    # Redirect uploads into a temp dir so tests never write into the repo tree.
+    import app.webui.app as webui_app
+    monkeypatch.setattr(webui_app, "IMAGES_DIR", tmp_path / "images")
     daemon = make_mock_daemon()
     app = create_app(daemon)
     app.config["TESTING"] = True
@@ -143,9 +147,35 @@ class TestUploadImage:
         resp = client.post("/api/upload-image", content_type="multipart/form-data")
         assert resp.status_code == 400
 
+    def test_upload_rejects_path_traversal(self, client, tmp_path):
+        img = Image.new("RGB", (10, 10), (0, 255, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        resp = client.post(
+            "/api/upload-image",
+            data={"file": (buf, "../../../../evil.png")},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        # The traversal is sanitized away, so nothing escapes the images dir.
+        assert ".." not in data["path"]
+        assert not (tmp_path.parent / "evil.png").exists()
+
 
 class TestIndexPage:
     def test_index(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
         assert b"Switchblade" in resp.data
+
+
+class TestHostGuard:
+    def test_rejects_foreign_host(self, client):
+        resp = client.get("/api/status", headers={"Host": "evil.example.com"})
+        assert resp.status_code == 403
+
+    def test_allows_loopback_host(self, client):
+        resp = client.get("/api/status", headers={"Host": "127.0.0.1:8377"})
+        assert resp.status_code == 200

@@ -26,7 +26,7 @@ def image_to_rgb565(
 ) -> bytes:
     """Convert a PIL image to RGB565 byte stream.
 
-    *endend* is ``'big'`` or ``'little'`` — the byte order within each 16-bit
+    *endian* is ``'big'`` or ``'little'`` — the byte order within each 16-bit
     pixel word.  Big-endian is the default; byte-swap to little-endian if
     colors come out swapped on hardware.
     """
@@ -51,6 +51,9 @@ def image_to_rgb565(
 
 def image_to_rgb565_fast(img: Image.Image, *, endian: str = "big") -> bytes:
     """Optimized RGB565 using numpy bit operations."""
+    if endian not in ("big", "little"):
+        raise ValueError(f"endian must be 'big' or 'little', got {endian!r}")
+
     import numpy as np
 
     img = img.convert("RGB")

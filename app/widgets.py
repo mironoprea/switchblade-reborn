@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from datetime import datetime
-from typing import Any, Optional
+from functools import lru_cache
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -20,8 +20,13 @@ from .protocol import SCREEN_WIDTH, SCREEN_HEIGHT
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=8)
 def _get_font(size: int = 20) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Try to find a usable font; fall back to default."""
+    """Try to find a usable font; fall back to default.
+
+    Cached per size — the font file was previously re-read on every widget
+    render (once a second).
+    """
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",

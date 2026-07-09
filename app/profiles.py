@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from .protocol import KEY_COUNT
 
@@ -239,11 +238,17 @@ def load_profiles(path: str) -> dict:
 
 
 def save_profiles(path: str, data: dict) -> None:
-    """Validate then write profiles.json."""
+    """Validate then atomically write profiles.json.
+
+    Writes to a temp file and ``os.replace``s it into place so a crash or power
+    loss mid-write can't corrupt the user's only config copy.
+    """
     validate_profiles(data)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
+    os.replace(tmp, path)
 
 
 def default_profiles() -> dict:
