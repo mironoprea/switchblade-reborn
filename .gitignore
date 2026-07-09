@@ -11,6 +11,7 @@ captures/*.pcapng
 captures/*.out
 captures/*.err
 captures/phone/
+captures/sdk-exerciser/
 profiles/images/*.png
 profiles/images/*.jpg
 !profiles/images/.gitkeep
