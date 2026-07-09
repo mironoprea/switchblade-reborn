@@ -5,6 +5,24 @@ Standalone Windows control app for the Razer DeathStalker Ultimate Switchblade U
 
 No Razer login, no cloud, no Synapse process required.
 
+## Current Status
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Build & tests | Working | 104/104 tests pass, profiles valid, libusb backend loads |
+| USB transport (pyusb + libusb) | Working | Device detected, interface 3 identified, backend injection patched |
+| Protocol layer (blit, checksum) | Ported | Header format, opcode, XOR checksum confirmed from FxChiP/rzswitchblade |
+| Init sequence | Resolved | No init needed per FxChiP source; no-op hook in place for future use |
+| Driver binding (Zadig) | **Blocked** | Interface 3 still has Razer driver, not WinUSB. Must run Zadig manually. |
+| Hardware bring-up | **Not started** | Requires Zadig first, then blit/key-event testing on real hardware |
+| Key image addressing | Unknown | FxChiP only does touchpad; y=480 hypothesis unconfirmed |
+| Key event format | Unknown | May be vendor IN endpoint or HID; needs capture or hardware test |
+| Brightness control | Unknown | Not in FxChiP; may need Razer HID feature report |
+| Web UI, profiles, actions, widgets | Working | All functional, covered by tests |
+
+See `HANDOFF.md` for full build history and `IMPLEMENTATION_PLAN.md` for the
+step-by-step guide to completing the remaining hardware steps.
+
 ## Quick Start
 
 ```powershell
@@ -89,14 +107,21 @@ Widget types: `clock`, `cpu_ram`, `media_now_playing`.
 
 ## Driver Setup (Zadig)
 
-The Switchblade vendor interface must be bound to WinUSB so pyusb can access it.
+The Switchblade vendor interface (**interface 3**, class 0xFF) must be bound to
+WinUSB so pyusb can access it. This is currently the **blocking step** — the
+factory Razer driver (`rzhnet.inf`) owns the interface and must be replaced.
 
-1. Download [Zadig](https://zadig.akeo.ie/).
-2. Options → List All Devices.
-3. Find the **Razer DeathStalker Ultimate** entry whose interface is the
-   vendor-specific one (class 0xFF, NOT the HID keyboard interfaces).
-4. Set the driver to **WinUSB** and click Replace Driver.
-5. Only bind the vendor interface — **never** touch HID interfaces (class 0x03).
+1. Fully exit Razer Synapse and kill `Rz*` processes.
+2. Download [Zadig](https://zadig.akeo.ie/) and run as Administrator.
+3. Options → List All Devices (checkbox).
+4. Find **Razer DeathStalker Ultimate (Interface 3)** — the one whose USB ID
+   contains `MI_03`. Cross-check: its driver should currently be the Razer driver.
+5. Set the target driver to **WinUSB** and click Replace Driver.
+6. **CRITICAL:** Only select the Interface 3 / `MI_03` row. Never touch interfaces
+   0, 1, or 2 — those are HID (keyboard, media, system control). Binding WinUSB
+   to them will disable your keyboard.
+7. Verify: `python tools\enumerate.py` should list interface 3 as Vendor-specific
+   with bulk EPs 0x01/0x02, without claim errors.
 
 ### Rollback Procedure
 
@@ -140,6 +165,8 @@ python -m pytest tests/ -v
 
 ## Documentation
 
+- `IMPLEMENTATION_PLAN.md` — Step-by-step guide for driver binding, fixes, and hardware bring-up
+- `HANDOFF.md` — Build history, what works, what's blocked, next steps
 - `RESEARCH.md` — Protocol dossier and evidence
 - `BUILD_SPEC.md` — Implementation specification
 - `PLAN.md` — Strategy and rationale

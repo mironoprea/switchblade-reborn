@@ -8,6 +8,34 @@
 
 ---
 
+## EXECUTION STATUS (updated 2026-07-09)
+
+| Section | Description | Status |
+|---------|-------------|--------|
+| A/B | Verify patches + read source | **Done** — all 3 patches verified correct |
+| H.1 | Mine FxChiP/rzswitchblade source | **Done** — header/checksum/init confirmed; key addressing + brightness not in FxChiP |
+| C.1 | Delete malformed INF | **Done** — `switchblade-winusb.inf` removed |
+| C.2 | Fix PROTOCOL.md device map | **Done** — 4-interface topology, [CONFIRMED] |
+| C.3 | Add init-sequence hook | **Done** — `Daemon._initialize_device()` no-op added |
+| C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
+| C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
+| D | Review, commit, push, PR, merge | **Done** — PR #2 merged to master |
+| E | Rebuild venv, run tests, validate | **Done** — 104/104 pass, profiles valid, libusb loads |
+| F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware |
+| G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |
+| H.2 | USB captures (if needed) | **Not started** — must be done before Section F |
+| H.3 | Key-event format resolution | **Not started** — requires hardware or captures |
+| I | Final acceptance checklist | **Not started** — requires all above |
+
+**FxChiP findings (H.1):** Header format (6 × big-endian uint16, opcode 0x0001, XOR
+checksum) confirmed matching. Rectangle is inclusive. No init sequence needed (claim
++ blit immediately). Key size may be 116×116 (README says 116, code uses 115). FxChiP
+sends header and payload as **two separate** bulk transfers; our code concatenates
+them (noted as diagnostic fallback in PROTOCOL.md and Section G.5). Key-image
+addressing and brightness are not in FxChiP — remain [UNKNOWN].
+
+---
+
 ## 0. READ THIS FIRST — critical sequencing
 
 There are two things that MUST happen in the right order, or you will lose the ability to do them:

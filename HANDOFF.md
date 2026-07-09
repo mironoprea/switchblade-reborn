@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Repo:** https://github.com/mironoprea/switchblade-reborn
-**Branch:** master (latest pulled, patches on build-fixes branch)
+**Branch:** master (build-fixes merged via PR #2)
 **Hardware:** Razer DeathStalker Ultimate (VID 0x1532 / PID 0x0114)
 **OS:** Windows 11, Python 3.13.5
 
@@ -127,8 +127,8 @@ Rollback if needed: Device Manager then Universal Serial Bus devices then Razer 
 
 These have NOT been tested on hardware yet (blocked by the driver issue):
 
-### 5.1 Init Sequence [UNKNOWN]
-PROTOCOL.md notes that it is unknown whether a mode-switch/init packet is needed when the device first connects. The current code goes straight from claim to READY to blit. If Synapse sends an init sequence first, the device may ignore blits without it. Needs a USB capture of Synapse startup to verify.
+### 5.1 Init Sequence [RESOLVED — PORTED from FxChiP/rzswitchblade]
+FxChiP/rzswitchblade source was mined (Section H.1 of IMPLEMENTATION_PLAN). The C library opens the device, detaches the kernel driver (Linux), claims the interface, and immediately blits — no init/mode-switch packet is sent. A `Daemon._initialize_device()` no-op hook has been added so that if hardware testing with WinUSB reveals an init sequence is needed, there is a place to add it. PROTOCOL.md updated to [PORTED].
 
 ### 5.2 Key Image Addressing [UNKNOWN]
 The code assumes keys are laid out at y=480 (below the screen) in a virtual framebuffer, each 115x115 pixels. PROTOCOL.md says this is a hypothesis — a different opcode or addressing scheme may be needed. Needs a USB capture of Synapse assigning key images.
@@ -162,18 +162,30 @@ Diagnostic tools:
 
 ## 7. Summary for the Advisor
 
+**Last updated:** 2026-07-09 (post IMPLEMENTATION_PLAN execution)
+
 Working:
 - Repo builds, all dependencies install, 104 tests pass.
 - Device is detected, vendor interface (3) correctly identified with bulk endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
 
-Blocked:
-- Interface 3 has the Razer driver (rzhnet.inf / oem16.inf), not WinUSB. pyusb cannot claim it.
-- Need Zadig or driver removal to bind WinUSB to interface 3 only.
+IMPLEMENTATION_PLAN Sections A-E, H.1 completed (PR #2 merged to master):
+- Deleted malformed switchblade-winusb.inf (broken HKR,,DriverFl line).
+- Fixed PROTOCOL.md device map to confirmed 4-interface topology [CONFIRMED].
+- Ported FxChiP/rzswitchblade findings: header format [PORTED], no init sequence
+  needed [PORTED], key size may be 116x116 [PORTED], separate header/payload
+  transfers noted as diagnostic fallback.
+- Added Daemon._initialize_device() no-op hook (C.3).
+- Fixed bulk IN read length 64 -> 512 in input_listener.py and listen_keys.py (C.4).
+- Added threading.Lock to UsbLink.write() and read() for thread-safety (C.5).
 
-Unknown (need USB captures of Synapse):
-- Init sequence on connect
-- Key image addressing (y=480 hypothesis vs. separate opcode)
-- Key event packet format
-- Screen brightness control format
+Blocked on hardware (Sections F, G, H.2/H.3, I):
+- Interface 3 has the Razer driver (rzhnet.inf / oem16.inf), not WinUSB. pyusb cannot
+  claim it. Need Zadig (Section F) to bind WinUSB to interface 3 only.
+- After Zadig: hardware bring-up (Section G) — blit test, key events, full daemon run.
+- Key image addressing still [UNKNOWN] — FxChiP only does touchpad blitting.
+- Key event format still [UNKNOWN] — may be on vendor IN endpoint or HID interfaces.
+- Brightness control still [UNKNOWN] — not present in FxChiP source.
+- USB captures (Section H.2) may still be needed for key addressing + key events, but
+  must be done BEFORE Zadig binding (while Razer driver is still active).
