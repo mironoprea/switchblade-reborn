@@ -8,22 +8,27 @@
 
 ---
 
-> ## ⚠️ FRESH-AGENT START HERE (2026-07-09, PR #3 merged)
+> ## Fresh-agent start here (2026-07-09, PR #5 merged)
 >
-> **All code work through Section E is DONE and on `master`.** Two review passes
-> shipped: PR #2 (build fixes) and PR #3 (transport / input-injection / web-API
-> hardening — see `HANDOFF.md` §8). The `build-fixes` branch is gone.
+> **All code work through Section E plus live endpoint/HID hardening is DONE and
+> on `master`.** PR #2 (build fixes), PR #3 (transport / input-injection /
+> web-API hardening), and PR #5 (live hardware endpoint discovery, HID diagnostics,
+> and Fable-reviewed InputListener no-IN pacing fix) are merged. The
+> `build-fixes` and `codex/hardware-probe-endpoints` branches are no longer the
+> active working targets.
 >
 > - **Do NOT re-apply Section C** — every edit there is already merged (and later
 >   superseded/extended by PR #3).
 > - **Do NOT follow Section D** — that branch/PR flow is complete.
 > - **Section D's CI note is stale:** CI now installs `requirements.txt` (so
 >   `pyusb`/`libusb-package`/`hidapi` are present and the transport tests run).
-> - **Your actual next step is Section F (Zadig driver bind).** Everything before
->   it is complete; the forward plan **F → G → H.2/H.3 → I is still exactly right.**
+> - **Your actual next step is either H.2 capture with Synapse/Razer still bound,
+>   or Section F Zadig driver bind if you accept skipping reference captures.**
+>   Everything before that is complete; the forward plan is **H.2 if possible →
+>   F → G → H.3 → I**.
 > - Test baseline after PR #3 was **110 tests (108 pass, 2 `pyusb`-gated skips)**,
 >   not 104. A later live hardware-probe hardening pass brings the local baseline
->   to **116 passing tests**.
+>   to **117 passing tests** on the current Windows local environment.
 >
 > Sections A–E below are kept for history; read them for context, not as a to-do.
 
@@ -40,9 +45,10 @@
 | C.3 | Add init-sequence hook | **Done** — `Daemon._initialize_device()` no-op added |
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
-| D | Review, commit, push, PR, merge | **Done** — PR #2 (build fixes) + PR #3 (review hardening) merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 116 tests pass, profiles valid, libusb loads |
+| D | Review, commit, push, PR, merge | **Done** — PR #2, PR #3, and PR #5 merged to master |
+| E | Rebuild venv, run tests, validate | **Done** — 117 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
+| — | Live endpoint/HID hardening + Fable review blocker | **Done** — PR #5; no vendor IN endpoint, HID diagnostic added, InputListener no-IN busy-spin fixed |
 | F | Bind WinUSB via Zadig | **Not started** — requires GUI + physical hardware **← fresh agent starts here** |
 | G | Hardware bring-up (blit test, keys) | **Not started** — requires Section F first |
 | H.2 | USB captures (if needed) | **Not started** — must be done before Section F |
@@ -536,7 +542,7 @@ The keyboard is "actually running" when all of these pass:
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
 - [ ] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [ ] All tests still pass (`python -m pytest tests/ -q`; currently 110 — 108 pass + 2 pyusb-gated skips),
+- [x] All tests still pass (`python -m pytest tests/ -q`; currently 117 pass),
       plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
       `[CONFIRMED]` or `[PORTED …]`.

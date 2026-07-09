@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Repo:** https://github.com/mironoprea/switchblade-reborn
-**Branch:** master (build-fixes merged via PR #2; code-review hardening merged via PR #3 — see §8)
+**Branch:** master (PR #2 build fixes, PR #3 code-review hardening, and PR #5 live endpoint/HID hardening merged)
 **Hardware:** Razer DeathStalker Ultimate (VID 0x1532 / PID 0x0114)
 **OS:** Windows 11, Python 3.13.5
 
@@ -15,7 +15,7 @@
 - Created a Python venv: python -m venv venv.
 - Installed all dependencies from requirements.txt: pyusb 1.3.1, libusb-package 1.0.30.0, Pillow 12.3.0, hidapi 0.15.0, flask 3.1.3, psutil 7.2.2, pywin32 312, numpy 2.5.1.
 - Installed pytest 9.1.1.
-- Ran the full test suite: 104/104 tests pass.
+- Ran the full test suite: current baseline is 117/117 tests pass.
 - Validated profiles/profiles.json: valid.
 
 ### 1.2 Patches Applied (3 files)
@@ -87,7 +87,7 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 116 tests pass.
+- The protocol layer, renderer, profile validation, web UI, and all 117 tests pass.
 - The only thing preventing the keyboard from working is the driver binding on interface 3.
 
 ---
@@ -162,17 +162,18 @@ Diagnostic tools:
 
     python tools\enumerate.py          # Show all interfaces/endpoints
     python tools\blit_test.py <image>   # Send a test image to the screen
-    python tools\listen_keys.py         # Listen for key press events
+    python tools\listen_keys.py         # Listen for vendor key packets, if any
+    python tools\listen_hid.py          # Listen for raw HID reports
 
 ---
 
 ## 7. Summary for the Advisor
 
-**Last updated:** 2026-07-09 (post PR #3 code-review hardening — see §8; this
-section describes the PR #2 milestone and remains accurate for the hardware state).
+**Last updated:** 2026-07-09 (post PR #5 merge; see Sections 8-9 for review and
+live hardware hardening details).
 
 Working:
-- Repo builds, all dependencies install, tests pass (116 total after HID diagnostic hardening).
+- Repo builds, all dependencies install, tests pass (117 total after Fable-reviewed InputListener pacing fix).
 - Device is detected, vendor interface (3) correctly identified with bulk OUT endpoints 0x01/0x02.
 - App code patched to work on Windows (libusb backend, INITIALIZING to READY transition).
 - Profile validation, web UI, renderer, protocol layer all functional.
@@ -209,7 +210,7 @@ means the code you run after Zadig is now correct where it previously wasn't.**
 
 **Test baseline after PR #3 was 110 tests: 108 pass + 2 `pyusb`-gated skips** (the
 2 skips run and pass on CI, which now installs `requirements.txt`). Current local
-baseline after HID diagnostic hardening is 116 passing tests.
+baseline after PR #5 live-hardware hardening is 117 passing tests.
 
 ### Highest-impact fixes (these directly affect bring-up)
 - **USB read timeouts were treated as fatal disconnects** (`usb_link.py`). The old
@@ -262,3 +263,8 @@ via Section G/H on real hardware as originally planned.
   `python tools\listen_hid.py`.
 - A 10-second run opened four non-keyboard collections successfully but captured no
   reports without physical LCD-key presses during the window.
+- Fable 5 review flagged one blocker before Zadig-bound daemon bring-up:
+  `InputListener` busy-spun once the device reached READY with no vendor IN
+  endpoint. PR #5 fixed this by sleeping in the no-IN path and added a regression
+  test. The PR was merged to `master` as merge commit
+  `8fe6cb8d0744477c230399437d2a72d2c9d50ffc`.

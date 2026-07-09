@@ -130,6 +130,12 @@ unknown.  Two legacy vendor-packet hypotheses are still implemented in
 If no events arrive on the vendor interface, listen on HID interfaces via
 hidapi instead.
 
+**[CONFIRMED implementation behavior]** Because the attached hardware exposes no
+vendor bulk IN endpoint, `UsbLink.read()` returns `b""` immediately in that state
+and `InputListener` paces itself with a sleep instead of busy-spinning. Use
+`tools/listen_hid.py` before Zadig, while the Razer/HID stack is still intact, to
+capture raw reports from the non-keyboard HID collections.
+
 ## Init sequence
 
 **[PORTED from FxChiP/rzswitchblade]** No init/mode-switch sequence is needed.
