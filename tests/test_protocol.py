@@ -68,15 +68,25 @@ class TestBuildBlit:
 class TestKeyBlit:
     def test_key_rect(self):
         x1, y1, x2, y2 = protocol.key_rect(0)
-        assert x1 == 0
-        assert y1 == protocol.KEY_Y_OFFSET
-        assert x2 == protocol.KEY_IMAGE_SIZE - 1
-        assert y2 == protocol.KEY_Y_OFFSET + protocol.KEY_IMAGE_SIZE - 1
+        assert (x1, y1, x2, y2) == (9, 318, 124, 433)
 
     def test_key_rect_index_1(self):
         x1, y1, x2, y2 = protocol.key_rect(1)
-        assert x1 == protocol.KEY_IMAGE_SIZE
-        assert x2 == protocol.KEY_IMAGE_SIZE * 2 - 1
+        assert (x1, y1, x2, y2) == (178, 318, 293, 433)
+
+    def test_key_rect_full_captured_table(self):
+        assert protocol.KEY_RECTS == (
+            (9, 318, 124, 433),
+            (178, 318, 293, 433),
+            (346, 318, 461, 433),
+            (515, 318, 630, 433),
+            (683, 318, 798, 433),
+            (9, 151, 124, 266),
+            (178, 151, 293, 266),
+            (346, 151, 461, 266),
+            (515, 151, 630, 266),
+            (683, 151, 798, 266),
+        )
 
     def test_key_rect_invalid_index(self):
         with pytest.raises(ValueError):
@@ -88,6 +98,20 @@ class TestKeyBlit:
         payload = b"\x00" * (protocol.KEY_IMAGE_SIZE * protocol.KEY_IMAGE_SIZE * 2)
         packet = protocol.build_key_blit(0, payload)
         assert len(packet) == 12 + len(payload)
+        assert packet[:12] == bytes.fromhex("00 01 00 09 01 3e 00 7c 01 b1 00 fb")
+
+    def test_build_key_blit_uses_115_payload_with_116_coordinate_header(self):
+        payload = b"\x00" * (115 * 115 * 2)
+        packet = protocol.build_key_blit(0, payload)
+        fields = struct.unpack(">HHHHHH", packet[:12])
+
+        assert fields[3] - fields[1] + 1 == 116
+        assert fields[4] - fields[2] + 1 == 116
+        assert len(packet) == 12 + 26450
+
+    def test_build_key_blit_rejects_bad_payload_size(self):
+        with pytest.raises(ValueError, match="key payload size mismatch"):
+            protocol.build_key_blit(0, b"\x00" * 10)
 
 
 class TestKeyEvent:

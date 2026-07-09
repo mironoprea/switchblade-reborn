@@ -29,7 +29,7 @@ try:
 except Exception:
     _BACKEND = None
 
-from .protocol import VENDOR_VID, VENDOR_PID, BULK_OUT_EP, BULK_IN_EP
+from .protocol import VENDOR_VID, VENDOR_PID, BULK_OUT_EP, BULK_KEY_OUT_EP, BULK_IN_EP
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +52,21 @@ class DeviceInfo:
     in_endpoint: Optional[int]
     max_out_packet: int
     max_in_packet: int
+    key_out_endpoint: Optional[int] = None
 
     def __str__(self) -> str:
         in_endpoint = (
             f"0x{self.in_endpoint:02x}" if self.in_endpoint is not None else "none"
         )
+        key_endpoint = (
+            f"0x{self.key_out_endpoint:02x}"
+            if self.key_out_endpoint is not None
+            else "none"
+        )
         return (
             f"interface={self.vendor_interface} "
             f"OUT=0x{self.out_endpoint:02x} "
+            f"KEY_OUT={key_endpoint} "
             f"IN={in_endpoint}"
         )
 
@@ -133,13 +140,20 @@ class UsbLink:
 
     def write(self, data: bytes) -> int:
         """Write data to the bulk OUT endpoint.  Returns bytes written."""
-        return self._write(data, chunk=True)
+        return self._write(data, chunk=True, endpoint=None)
 
     def write_transfer(self, data: bytes) -> int:
         """Write data as one bulk OUT transfer.  Returns bytes written."""
-        return self._write(data, chunk=False)
+        return self._write(data, chunk=False, endpoint=None)
 
-    def _write(self, data: bytes, *, chunk: bool) -> int:
+    def write_key_transfer(self, data: bytes) -> int:
+        """Write data as one transfer to the key-image bulk OUT endpoint."""
+        info = self.info
+        if info is None or info.key_out_endpoint is None:
+            raise ConnectionError("No key-image bulk OUT endpoint")
+        return self._write(data, chunk=False, endpoint=info.key_out_endpoint)
+
+    def _write(self, data: bytes, *, chunk: bool, endpoint: Optional[int]) -> int:
         if self.state not in (READY, INITIALIZING):
             raise ConnectionError(f"Device not ready (state={self.state})")
         # Snapshot the handle so a concurrent teardown can't null it mid-use.
@@ -147,11 +161,12 @@ class UsbLink:
         info = self.info
         if dev is None or info is None:
             raise ConnectionError("No device handle")
+        out_endpoint = endpoint if endpoint is not None else info.out_endpoint
         try:
             with self._io_lock:
                 if not chunk:
                     return dev.write(
-                        info.out_endpoint,
+                        out_endpoint,
                         data,
                         timeout=USB_TIMEOUT,
                     )
@@ -161,7 +176,7 @@ class UsbLink:
                 while offset < len(data):
                     end = min(offset + chunk_size, len(data))
                     written = dev.write(
-                        info.out_endpoint,
+                        out_endpoint,
                         data[offset:end],
                         timeout=USB_TIMEOUT,
                     )
@@ -337,12 +352,22 @@ class UsbLink:
                 return ep
         return endpoints[0] if endpoints else None
 
+    @staticmethod
+    def _find_endpoint(endpoints, address: int):
+        for ep in endpoints:
+            if ep.bEndpointAddress == address:
+                return ep
+        return None
+
     @classmethod
     def _build_info(cls, iface, out_eps, in_eps) -> DeviceInfo:
         out_ep = cls._select_endpoint(out_eps, BULK_OUT_EP)
+        key_out_ep = cls._find_endpoint(out_eps, BULK_KEY_OUT_EP)
         in_ep = cls._select_endpoint(in_eps, BULK_IN_EP)
         if out_ep is None:
             raise ValueError("vendor interface has no bulk OUT endpoint")
+        if key_out_ep is not None and key_out_ep.bEndpointAddress == out_ep.bEndpointAddress:
+            key_out_ep = None
 
         return DeviceInfo(
             vendor_interface=iface.bInterfaceNumber,
@@ -350,6 +375,9 @@ class UsbLink:
             in_endpoint=in_ep.bEndpointAddress if in_ep is not None else None,
             max_out_packet=out_ep.wMaxPacketSize,
             max_in_packet=in_ep.wMaxPacketSize if in_ep is not None else 0,
+            key_out_endpoint=(
+                key_out_ep.bEndpointAddress if key_out_ep is not None else None
+            ),
         )
 
     def _device_present(self) -> bool:

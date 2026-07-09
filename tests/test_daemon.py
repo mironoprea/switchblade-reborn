@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 import pytest
 from app.daemon import Daemon
 from app.profiles import ProfileError
@@ -106,7 +107,7 @@ class TestDaemonInit:
         assert daemon._current_profile_name == "media"
         assert daemon.profiles_data["active_profile"] == "media"
 
-    def test_render_full_profile_does_not_blit_key_images(self, monkeypatch):
+    def test_render_full_profile_skips_key_images_without_key_endpoint(self, monkeypatch):
         daemon = Daemon(web=False)
         daemon.profiles_data = {
             "version": 1,
@@ -129,6 +130,32 @@ class TestDaemonInit:
         daemon._render_full_profile()
 
         assert key_blits == []
+
+    def test_render_full_profile_blits_key_images_with_usb_key_endpoint(self, monkeypatch):
+        daemon = Daemon(web=False)
+        daemon.link.info = SimpleNamespace(key_out_endpoint=0x02)
+        daemon.profiles_data = {
+            "version": 1,
+            "active_profile": "default",
+            "settings": {},
+            "auto_switch": {},
+            "profiles": {
+                "default": {
+                    "screen": {"type": "image", "path": "missing.png"},
+                    "keys": [
+                        {"image": None, "label": f"Key {i}", "action": None}
+                        for i in range(10)
+                    ],
+                }
+            },
+        }
+
+        key_blits = []
+        monkeypatch.setattr(daemon, "_blit_key", lambda *args: key_blits.append(args))
+
+        daemon._render_full_profile()
+
+        assert [args[0] for args in key_blits] == list(range(10))
 
     def test_prepare_backend_auto_uses_sdk_when_available(self, monkeypatch):
         class FakeSdkDisplay:

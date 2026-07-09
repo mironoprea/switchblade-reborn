@@ -6,7 +6,8 @@
 - Hardware: Razer DeathStalker Ultimate, VID `1532`, PID `0114`.
 - MI_03 currently uses the original Razer driver (`Razer DeathStalker Ultimate`, driver `oem16.inf` in prior checks), which is correct for the SDK backend.
 - Physical key input is HID, not vendor bulk IN. Reports are `04 50` through `04 59` for key down and `04 00` for release.
-- USBPcap is installed but not useful on this host yet: only `\\.\USBPcap1` opens and captures no keyboard traffic; roots 2-8 fail.
+- USBPcap is installed but not useful on this host: only `\\.\USBPcap1` opens and captures no keyboard traffic; roots 2-8 fail.
+- A Frida trace of `SdkExerciser.exe` recovered the direct physical-key image path.
 
 ## Display Paths
 
@@ -34,7 +35,8 @@ Use the direct USB path only after MI_03 is rebound to WinUSB:
 python -m app.cli run --backend usb
 ```
 
-Direct USB renders the main 800x480 LCD but does not know physical key-image addressing.
+Direct USB uses bulk OUT `0x01` for the main 800x480 LCD and bulk OUT `0x02` for
+physical LCD keys when that endpoint is present.
 
 ## Visual Verification
 
@@ -57,7 +59,10 @@ Known proof artifacts from 2026-07-09:
 
 ## Remaining Gaps
 
-- Direct USB physical key-image protocol is still unknown. The `y=480`, 115x115 virtual framebuffer hypothesis is rejected.
+- Direct USB physical key-image protocol is implemented from SDK client trace:
+  device path suffix `\2`, bulk OUT `0x02`, 12-byte blit header plus 26,450-byte
+  115x115 RGB565 payload.
+- The remaining direct-USB task is visual verification after MI_03 is rebound to WinUSB.
 - Brightness command is still unknown.
 - USB reference capture remains blocked by USBPcap root visibility on this machine.
 
@@ -69,4 +74,4 @@ python -m compileall app tools tests
 git diff --check
 ```
 
-Expected test baseline: `148 passed`.
+Expected test baseline: `157 passed`.

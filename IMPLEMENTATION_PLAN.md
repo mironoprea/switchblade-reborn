@@ -48,14 +48,14 @@
 | C.4 | Fix bulk IN read length | **Done** — 64 → 512 in input_listener.py + listen_keys.py |
 | C.5 | Add I/O lock in UsbLink | **Done** — `threading.Lock` in write() + read() |
 | D | Review, commit, push, PR, merge | **Done** — PR #2, PR #3, and PR #5 merged to master |
-| E | Rebuild venv, run tests, validate | **Done** — 148 tests pass, profiles valid, libusb loads |
+| E | Rebuild venv, run tests, validate | **Done** — 157 tests pass, profiles valid, libusb loads |
 | — | Second review pass: transport/actions/web-API hardening | **Done** — PR #3; full detail in HANDOFF.md §8 |
 | — | Live endpoint/HID hardening + Fable review blocker | **Done** — PR #5; no vendor IN endpoint, HID diagnostic added, InputListener no-IN busy-spin fixed |
 | F | Bind WinUSB via Zadig | **Done** — interface 3 / MI_03 bound to WinUSB via Zadig |
 | G | Hardware bring-up (blit test, keys) | **Done via SDK backend** — main LCD renders, physical LCD key images render through SDK, HID key events captured, hotplug reconnect verified |
 | H.2 | USB captures (if needed) | **Blocked/Prepared** — USBPcap tooling exists, but only `\\.\USBPcap1` opens and captures no keyboard traffic on this host |
-| H.3 | Key-event format resolution | **Done for physical keys** — HID reports `04 50`..`04 59`, release `04 00`; key-image addressing still unresolved |
-| I | Final acceptance checklist | **Partial** — SDK backend satisfies runtime key-image rendering; direct USB key-image wire protocol and brightness remain unknown |
+| H.3 | Key-event format resolution | **Done for physical keys** — HID reports `04 50`..`04 59`, release `04 00`; direct key-image addressing implemented from SDK trace |
+| I | Final acceptance checklist | **Partial** — SDK backend satisfies runtime key-image rendering; direct USB key-image wire protocol is implemented but still needs visual verification; brightness remains unknown |
 
 **FxChiP findings (H.1):** Header format (6 × big-endian uint16, opcode 0x0001, XOR
 checksum) confirmed matching. Rectangle is inclusive. No init sequence needed (claim
@@ -408,12 +408,12 @@ Do these in order. Stop and diagnose at the first failure.
      toggle usually fixes swapped colors.
 3. **Key image blit** — test one dynamic key:
    ```powershell
-   python -c "from app.usb_link import UsbLink; from app import protocol; from app.renderer import render_key_image_to_rgb565; l=UsbLink(); [l.poll() for _ in range(10)]; l.mark_ready(); l.write(protocol.build_key_blit(0, render_key_image_to_rgb565('profiles/images/key0.png'))); l.disconnect()"
+   python -m app.cli blit-key 0 profiles\images\key0.png --backend usb
    ```
-   - If key 0's LCD shows the image: the `y=480` / 115×115 addressing hypothesis is correct.
-   - **Actual 2026-07-09 result:** the image appeared on the main touch LCD, not on a physical key. The
-     `y=480` hypothesis is rejected and daemon key-image blits are disabled until key-image captures resolve
-     the real addressing.
+   - **Actual 2026-07-09 trace result:** the old `y=480` path is rejected. SDK client tracing showed
+     physical key images use bulk OUT `0x02`, 12-byte blit headers with captured key rectangles, and
+     26,450-byte 115x115 RGB565 payloads. The direct USB backend now implements that path; visually verify
+     with the Motorola camera after rebinding MI_03 to WinUSB.
 4. **Key events** — run the listener and press the 10 LCD keys:
    ```powershell
    python tools\listen_keys.py
@@ -431,7 +431,7 @@ Do these in order. Stop and diagnose at the first failure.
    ```
    Expect logs: `CLAIMING` → `INITIALIZING` → `READY` → `Device ready. Rendering active profile.` The web
    UI at http://127.0.0.1:8377 should load. The active profile's screen should appear. Physical key images
-   are intentionally not blitted until their addressing is resolved.
+   should render when the selected backend supports them (`sdk` or direct USB with key OUT endpoint 0x02).
 
 ---
 
@@ -450,9 +450,8 @@ DeathStalker Ultimate**. Its C source is the highest-value reference. Do this:
      the first blit (e.g. a "set mode", "start", or magic packet). Port the exact bytes into
      `protocol.INIT_SEQUENCE` (a list of `bytes`) and have `Daemon._initialize_device()` (Section C.3) send
      them.
-   - **Key-image addressing:** how it computes the rectangle/offset for each of the 10 keys. Confirm whether
-     it uses the "keys below the screen at y=480, 115×115" model (matches current `protocol.key_rect`) or a
-     separate opcode/endpoint. Update `KEY_IMAGE_SIZE`, `KEY_Y_OFFSET`, and `key_rect()` to match.
+   - **Key-image addressing:** this is now implemented from SDK client trace rather than FxChiP. Confirm the
+     direct USB path still uses endpoint `0x02`, `KEY_IMAGE_SIZE = 115`, and the captured `KEY_RECTS`.
    - **Brightness:** any command it exposes for backlight/screen brightness. Capture the exact opcode/report
      and add a `build_brightness(level)` function + a CLI/daemon call.
    - **Checksum/endianness:** confirm the XOR checksum and big-endian header match — the current code claims
@@ -488,7 +487,7 @@ best first:
    usb.idVendor == 0x1532 && usb.idProduct == 0x0114
    ```
    or, once you know the address, `usb.device_address == N`. To see only vendor bulk traffic, add
-   `usb.transfer_type == 0x03` (bulk) and filter on endpoints `0x01` (OUT) and `0x02` (IN).
+   `usb.transfer_type == 0x03` (bulk) and filter on endpoints `0x01` (screen OUT) and `0x02` (key OUT).
 
 **Capture scenarios (run each, save a separate `.pcapng` into the repo's `captures/` folder):**
 - `01-attach-init.pcapng`: start capture, then plug in the keyboard (or start Synapse). Captures the init /
@@ -496,7 +495,7 @@ best first:
   interface 3 before any large pixel payload.
 - `02-set-key-image.pcapng`: with capture running, use Synapse to assign a distinct image to one dynamic
   key. The bulk-OUT payload's header reveals the **key-image addressing** (compare the x1/y1/x2/y2 in the
-  12-byte header against the `y=480, 115×115` hypothesis).
+  12-byte header against the captured direct-USB key rectangles).
 - `03-key-press.pcapng`: press each of the 10 LCD keys. Watch the HID interrupt IN endpoints
   (0x81/0x82/0x83), plus any vendor IN endpoint if a capture shows one. Wherever the bytes change per key
   press is the **key-event** source and format.
@@ -539,14 +538,14 @@ The keyboard is "actually running" when all of these pass:
 - [x] `python tools\enumerate.py` lists interface 3 as Vendor-specific with bulk OUT EPs 0x01/0x02 (WinUSB bound).
 - [x] `python tools\blit_test.py <image>` renders the image on the trackpad LCD with correct colors.
 - [x] A key-image blit renders on the correct dynamic key at the correct position via `--backend sdk`.
-      Current direct-USB y=480 hypothesis is rejected and remains disabled.
+      Direct USB key-image blits are implemented from SDK trace and need visual verification after WinUSB rebinding.
 - [x] Pressing an LCD key produces a parsed `KeyEvent` (via HID per H.3) and triggers its
       configured action.
 - [x] `python -m app.cli run` reaches `READY`, renders the active profile's screen, and the
       web UI at http://127.0.0.1:8377 loads and can switch profiles.
 - [x] Unplug/replug the keyboard: the daemon logs `DISCONNECTED` then reconnects to `READY` within a few
       seconds (hotplug works).
-- [x] All tests still pass (`python -m pytest tests/ -q`; currently 148 pass),
+- [x] All tests still pass (`python -m pytest tests/ -q`; currently 157 pass),
       plus any new capture-fixture tests.
 - [ ] `PROTOCOL.md` no longer contains `[UNKNOWN]` for any gap you resolved; each resolved fact is tagged
       `[CONFIRMED]` or `[PORTED …]`. Direct USB key-image addressing and brightness remain unresolved.

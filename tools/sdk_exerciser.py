@@ -101,6 +101,14 @@ internal static class Program
             return 2;
         }
 
+        int preCallMilliseconds = 0;
+        string preCallValue = Environment.GetEnvironmentVariable("SWITCHBLADE_SDK_PRECALL_MS");
+        if (!String.IsNullOrEmpty(preCallValue) && Int32.TryParse(preCallValue, out preCallMilliseconds) && preCallMilliseconds > 0)
+        {
+            Console.WriteLine("Pre-call hold for " + preCallMilliseconds + " ms.");
+            PumpMessages(preCallMilliseconds);
+        }
+
         int failures = 0;
         try
         {
@@ -232,6 +240,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--csc", help="path to 32-bit-capable csc.exe")
     parser.add_argument("--hold-seconds", type=int, default=20)
+    parser.add_argument(
+        "--pre-call-seconds",
+        type=float,
+        default=0,
+        help="delay after RzSBStart before image calls, useful for attaching tracers",
+    )
     parser.add_argument("--key", action="append", type=int, help="1-based dynamic key number; repeatable")
     parser.add_argument("--all-keys", action="store_true")
     parser.add_argument("--no-touchpad", action="store_true")
@@ -266,8 +280,11 @@ def main() -> int:
         csc = find_csc(args.csc)
         exe = compile_exerciser(csc, args.output_dir)
         cmd = [str(exe), *build_exerciser_args(args.sdk_dir, args.hold_seconds, touchpad, key_images)]
+        env = os.environ.copy()
+        if args.pre_call_seconds > 0:
+            env["SWITCHBLADE_SDK_PRECALL_MS"] = str(int(args.pre_call_seconds * 1000))
         print("Running:", " ".join(cmd))
-        return subprocess.run(cmd).returncode
+        return subprocess.run(cmd, env=env).returncode
     except (OSError, subprocess.CalledProcessError) as exc:
         print(f"Error running SDK exerciser: {exc}", file=sys.stderr)
         return 1

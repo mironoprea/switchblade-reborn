@@ -15,7 +15,7 @@
 - Created a Python venv: python -m venv venv.
 - Installed all dependencies from requirements.txt: pyusb 1.3.1, libusb-package 1.0.30.0, Pillow 12.3.0, hidapi 0.15.0, flask 3.1.3, psutil 7.2.2, pywin32 312, numpy 2.5.1.
 - Installed pytest 9.1.1.
-- Ran the full test suite: current baseline is 136/136 tests pass.
+- Ran the full test suite: baseline at that point was 136/136 tests pass.
 - Validated profiles/profiles.json: valid.
 
 ### 1.2 Patches Applied (3 files)
@@ -87,7 +87,7 @@ pyusb/libusb can only access USB interfaces that are bound to the WinUSB (or lib
 
 ### 3.2 What This Means
 - The app code is correct: device discovery, interface scanning, endpoint identification, and safety guards all work.
-- The protocol layer, renderer, profile validation, web UI, and all 136 tests pass.
+- The protocol layer, renderer, profile validation, web UI, and then-current 136-test suite pass.
 - The WinUSB driver bind is complete; remaining work is physical key-image addressing and higher-level key profiles.
 
 ---
@@ -133,13 +133,12 @@ These have NOT been tested on hardware yet (blocked by the driver issue):
 ### 5.1 Init Sequence [RESOLVED — PORTED from FxChiP/rzswitchblade]
 FxChiP/rzswitchblade source was mined (Section H.1 of IMPLEMENTATION_PLAN). The C library opens the device, detaches the kernel driver (Linux), claims the interface, and immediately blits — no init/mode-switch packet is sent. A `Daemon._initialize_device()` no-op hook has been added so that if hardware testing with WinUSB reveals an init sequence is needed, there is a place to add it. PROTOCOL.md updated to [PORTED].
 
-### 5.2 Key Image Addressing [UNKNOWN]
+### 5.2 Key Image Addressing [IMPLEMENTED FROM SDK TRACE]
 The old code assumed key images were laid out at y=480 (below the screen) in a
 virtual framebuffer, each 115x115 pixels. Hardware testing proved that hypothesis
 wrong: blitting key 0 places the image on the main touch LCD, not on a physical
-LCD key. Physical key-image blits are disabled in the daemon until a capture
-reveals the real addressing path. Needs a USB capture of Synapse assigning key
-images.
+LCD key. Section 13 documents the recovered direct USB key-image path: bulk OUT
+0x02, captured SDK rectangles, and 115x115 RGB565 payloads.
 
 ### 5.3 Physical LCD Key Event Format [CONFIRMED]
 Physical LCD-key presses arrive on HID collection `MI_01&Col04`, not on the vendor
@@ -356,8 +355,30 @@ via Section G/H on real hardware as originally planned.
   SDK installed, `auto` uses the SDK backend for the touchpad and all ten LCD key
   images while HID input remains active. Use `--backend usb` to force the direct
   WinUSB bulk path.
-- Direct WinUSB physical-key image addressing is still unknown. The rejected
-  `y=480` virtual-framebuffer path remains disabled in USB mode.
+- Direct WinUSB physical-key image addressing has since been recovered from a
+  Frida trace of the SDK client. See Section 13.
 - `tools/adb_photo.py` now ignores Android `.thumb` camera sidecars when choosing
   the newest image to pull.
-- Current local test baseline after this addendum: `148 passed`.
+- Current local test baseline after the direct USB key trace addendum: `157 passed`.
+
+---
+
+## 13. Direct USB Key Image Trace Addendum (2026-07-09)
+
+- USBPcap remained unusable, so `tools/trace_rzappmanager.py` was added as an
+  optional Frida helper. Tracing `SdkExerciser.exe` exposed the SDK client's raw
+  `CreateFileW`/`WriteFile` calls before the Razer driver path receives them.
+- Touchpad screen writes use device path suffix `\1`, matching direct bulk OUT
+  endpoint `0x01`.
+- Physical LCD key image writes use device path suffix `\2`, matching direct bulk
+  OUT endpoint `0x02`. Each key write is a 12-byte blit header followed by a
+  26,450-byte RGB565 payload (`115 * 115 * 2`).
+- The captured key header rectangles are implemented in `app/protocol.py`:
+  keys 0-4 are the bottom row, keys 5-9 are the top row. Header rectangles are
+  116x116 in coordinate space even though payloads are 115x115.
+- `app/usb_link.py` now records `key_out_endpoint=0x02` when present, and
+  `app/daemon.py` renders profile key images through direct USB when that
+  endpoint is available.
+- Remaining hardware step: rebind MI_03 to WinUSB and visually verify
+  `python -m app.cli blit-key 0 profiles\images\key0.png --backend usb` with the
+  Motorola ADB camera.

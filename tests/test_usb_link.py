@@ -74,8 +74,18 @@ def test_build_info_prefers_canonical_out_endpoint_when_multiple_outs():
     info = usb_link.UsbLink._build_info(iface, list(iface), [])
 
     assert info.out_endpoint == 0x01
+    assert info.key_out_endpoint == 0x02
     assert info.in_endpoint is None
-    assert str(info) == "interface=3 OUT=0x01 IN=none"
+    assert str(info) == "interface=3 OUT=0x01 KEY_OUT=0x02 IN=none"
+
+
+def test_build_info_does_not_invent_key_endpoint():
+    iface = _Interface([_Endpoint(0x03), _Endpoint(0x01)])
+
+    info = usb_link.UsbLink._build_info(iface, list(iface), [])
+
+    assert info.out_endpoint == 0x01
+    assert info.key_out_endpoint is None
 
 
 def test_read_returns_empty_when_no_vendor_in_endpoint():
@@ -106,6 +116,32 @@ def test_write_transfer_sends_single_bulk_transfer():
     assert len(dev.calls) == 1
     assert dev.calls[0][0][0] == 0x01
     assert dev.calls[0][0][1] == payload
+
+
+def test_write_key_transfer_uses_key_out_endpoint():
+    class _Dev:
+        def __init__(self):
+            self.calls = []
+
+        def write(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return len(args[1])
+
+    dev = _Dev()
+    link = _make_link(dev)
+    link.info.key_out_endpoint = 0x02
+    payload = b"key"
+
+    assert link.write_key_transfer(payload) == len(payload)
+    assert dev.calls[0][0][0] == 0x02
+    assert dev.calls[0][0][1] == payload
+
+
+def test_write_key_transfer_rejects_missing_key_endpoint():
+    link = _make_link(object())
+
+    with pytest.raises(ConnectionError, match="key-image bulk OUT endpoint"):
+        link.write_key_transfer(b"key")
 
 
 @pytest.mark.skipif(usb is None, reason="pyusb not installed")

@@ -1,4 +1,4 @@
-# PROTOCOL.md — Switchblade Reborn Protocol Documentation
+# PROTOCOL.md - Switchblade Reborn Protocol Documentation
 
 This file documents the USB wire protocol for the Razer DeathStalker Ultimate
 Switchblade UI (VID 0x1532, PID 0x0114).  Facts are tagged with their evidence
@@ -53,7 +53,7 @@ checksum = opcode ^ x1 ^ y1 ^ x2 ^ y2
 
 ### Rectangle semantics
 
-The rectangle is **inclusive**: pixel count = (x2 - x1 + 1) × (y2 - y1 + 1).
+The rectangle is **inclusive**: pixel count = (x2 - x1 + 1) x (y2 - y1 + 1).
 
 ### Pixel format
 
@@ -69,7 +69,7 @@ b5 = (B >> 3) & 0x1F
 pixel = (r5 << 11) | (g6 << 5) | b5
 ```
 
-### Example: full-screen blit (800×480, solid black)
+### Example: full-screen blit (800x480, solid black)
 
 Header bytes:
 ```
@@ -81,9 +81,9 @@ Header bytes:
 02 C1   # checksum = 0x0001 ^ 0x0000 ^ 0x0000 ^ 0x031F ^ 0x01DF = 0x02C1
 ```
 
-Payload: 800 × 480 × 2 = 768,000 bytes of `0x00 0x00` (black pixels).
+Payload: 800 x 480 x 2 = 768,000 bytes of `0x00 0x00` (black pixels).
 
-### Rejected example: old key blit hypothesis (key 0, 115×115)
+### Rejected example: old key blit hypothesis (key 0, 115x115)
 
 These bytes are retained only as documentation of the rejected hypothesis. Live
 testing showed this address writes into the main touch LCD, not a physical key.
@@ -106,24 +106,41 @@ through the official Razer SwitchBlade SDK. The Python app uses a persistent
 32-bit. `--backend auto` selects this path when the SDK is installed, and
 `--backend sdk` forces it.
 
-**[REJECTED hypothesis / UNKNOWN direct USB replacement]** The exact direct USB
-addressing of dynamic key images is not yet confirmed. Hardware testing showed
-the old virtual-framebuffer hypothesis (`y = 480`, one 115x115 region per key)
-writes onto the main touch LCD instead of separate physical key displays. The
-daemon therefore does **not** blit profile key images through the direct USB
-backend.
+**[CONFIRMED via SDK client Frida trace]** Dynamic key image writes use the same
+blit header format, but go to the second vendor OUT path (`...\2`), which maps to
+bulk OUT endpoint `0x02` in the direct WinUSB backend. The SDK writes the 12-byte
+header and the full key payload as separate `WriteFile` calls, matching the main
+screen transfer shape.
+
+Each key payload is 115x115 RGB565 little-endian:
+
+```
+115 * 115 * 2 = 26450 bytes
+```
+
+The captured header rectangles are 116x116 in coordinate space even though the
+payload is 115x115. Do not use the generic inclusive-rectangle payload validator
+for key packets.
+
+| App key index | SDK key | Physical position | Header rect `(x1,y1)-(x2,y2)` | Header bytes |
+|---------------|---------|-------------------|-------------------------------|--------------|
+| 0 | 1 | bottom row, left | `(9,318)-(124,433)` | `00 01 00 09 01 3e 00 7c 01 b1 00 fb` |
+| 1 | 2 | bottom row | `(178,318)-(293,433)` | `00 01 00 b2 01 3e 01 25 01 b1 01 19` |
+| 2 | 3 | bottom row | `(346,318)-(461,433)` | `00 01 01 5a 01 3e 01 cd 01 b1 00 19` |
+| 3 | 4 | bottom row | `(515,318)-(630,433)` | `00 01 02 03 01 3e 02 76 01 b1 00 fb` |
+| 4 | 5 | bottom row, right | `(683,318)-(798,433)` | `00 01 02 ab 01 3e 03 1e 01 b1 01 3b` |
+| 5 | 6 | top row, left | `(9,151)-(124,266)` | `00 01 00 09 00 97 00 7c 01 0a 01 e9` |
+| 6 | 7 | top row | `(178,151)-(293,266)` | `00 01 00 b2 00 97 01 25 01 0a 00 0b` |
+| 7 | 8 | top row | `(346,151)-(461,266)` | `00 01 01 5a 00 97 01 cd 01 0a 01 0b` |
+| 8 | 9 | top row | `(515,151)-(630,266)` | `00 01 02 03 00 97 02 76 01 0a 01 e9` |
+| 9 | 10 | top row, right | `(683,151)-(798,266)` | `00 01 02 ab 00 97 03 1e 01 0a 00 29` |
+
+**[REJECTED hypothesis]** The old virtual-framebuffer hypothesis (`y = 480`, one
+115x115 region per key) writes onto the main touch LCD instead of separate
+physical key displays.
+
 FxChiP/rzswitchblade only implements touchpad blitting (`rzswitchblade_blit_tp_sync`);
 no key-image addressing code exists in that library.
-
-Remaining hypotheses:
-
-1. A different opcode, endpoint, report, or mode is used for physical key images.
-
-**[PORTED from FxChiP/rzswitchblade]** The FxChiP README states each "macro button"
-can hold a **116×116** icon (not 115×115). The current code uses 115; if key
-images appear clipped or offset, try `KEY_IMAGE_SIZE = 116`.
-
-A USB capture of Synapse assigning key images resolves this.
 
 ## Key events
 

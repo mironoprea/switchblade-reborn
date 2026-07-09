@@ -286,8 +286,8 @@ class Daemon:
 
     def _render_all_keys(self) -> None:
         """Render dynamic key images when the active backend supports them."""
-        if self.sdk_display is None:
-            logger.debug("Skipping key-image blits; direct USB addressing is unconfirmed.")
+        if not self._key_images_supported():
+            logger.debug("Skipping key-image blits; no key-image endpoint is available.")
             return
         profile = profiles_mod.get_active_profile(self.profiles_data)
         keys = profile.get("keys", [])
@@ -330,7 +330,7 @@ class Daemon:
             return
         packet = protocol.build_key_blit(key_index, rgb565)
         try:
-            self._write_blit_packet(packet)
+            self._write_key_blit_packet(packet)
         except ConnectionError as exc:
             logger.debug("Key blit failed: %s", exc)
 
@@ -344,6 +344,18 @@ class Daemon:
         """
         self.link.write_transfer(packet[:protocol.HEADER_SIZE])
         self.link.write_transfer(packet[protocol.HEADER_SIZE:])
+
+    def _write_key_blit_packet(self, packet: bytes) -> None:
+        """Send a key blit as header + one payload transfer to KEY_OUT."""
+        self.link.write_key_transfer(packet[:protocol.HEADER_SIZE])
+        self.link.write_key_transfer(packet[protocol.HEADER_SIZE:])
+
+    def _key_images_supported(self) -> bool:
+        """Return True when the selected backend can update physical key LCDs."""
+        if self.sdk_display is not None:
+            return True
+        info = getattr(self.link, "info", None)
+        return getattr(info, "key_out_endpoint", None) is not None
 
     def _refresh_widgets(self) -> None:
         with self._render_lock:
@@ -478,12 +490,10 @@ class Daemon:
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
-        logger.warning(
-            "Key image blits are disabled: current addressing writes to the main LCD "
-            "(key=%d, image=%s).",
-            key_index,
-            image_path,
-        )
+        rgb565 = render_key_image_to_rgb565(image_path)
+        packet = protocol.build_key_blit(key_index, rgb565)
+        self._write_key_blit_packet(packet)
+        logger.info("USB key blit complete: key=%d image=%s", key_index, image_path)
 
     # ------------------------------------------------------------------
     # Utilities

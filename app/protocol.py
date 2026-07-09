@@ -32,19 +32,35 @@ SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
 
 KEY_COUNT = 10
-KEY_IMAGE_SIZE = 115       # [SEED] official SDK says 115×115; verify on hardware
-KEY_Y_OFFSET = SCREEN_HEIGHT  # hypothesis: keys are below screen in virtual FB
+KEY_IMAGE_SIZE = 115       # official SDK key bitmap size
 
 VENDOR_VID = 0x1532
 VENDOR_PID = 0x0114
 
-# Endpoint addresses (from rzswitchblade header, Blade PID 0x0116).
-# DeathStalker may differ — set via usb_link at runtime if needed.
+# Endpoint addresses confirmed on DeathStalker Ultimate interface MI_03.
 BULK_OUT_EP = 0x01
+BULK_KEY_OUT_EP = 0x02
 BULK_IN_EP = 0x02
 
 HID_KEY_REPORT_ID = 0x04
 HID_KEY_BASE = 0x50
+
+# Captured from the official SwitchBlade SDK client path.  The SDK opens
+# the same device interface with suffix "\2" and writes these blit headers
+# followed by a 115x115 RGB565 payload.  The header rectangles are 116x116
+# in coordinate space; the device/driver accepts the 115x115 payload.
+KEY_RECTS: tuple[tuple[int, int, int, int], ...] = (
+    (9, 318, 124, 433),
+    (178, 318, 293, 433),
+    (346, 318, 461, 433),
+    (515, 318, 630, 433),
+    (683, 318, 798, 433),
+    (9, 151, 124, 266),
+    (178, 151, 293, 266),
+    (346, 151, 461, 266),
+    (515, 151, 630, 266),
+    (683, 151, 798, 266),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,24 +133,22 @@ def build_blit_header(
 # ---------------------------------------------------------------------------
 
 def key_rect(key_index: int) -> tuple[int, int, int, int]:
-    """Return (x1, y1, x2, y2) for a dynamic key in the virtual framebuffer.
-
-    Uses the hypothesis that keys are laid out horizontally below the screen,
-    starting at y = SCREEN_HEIGHT.  This must be verified against real captures.
-    """
+    """Return the captured SDK blit rectangle for a dynamic key."""
     if not 0 <= key_index < KEY_COUNT:
         raise ValueError(f"key index must be 0-{KEY_COUNT - 1}, got {key_index}")
-    x1 = key_index * KEY_IMAGE_SIZE
-    y1 = KEY_Y_OFFSET
-    x2 = x1 + KEY_IMAGE_SIZE - 1
-    y2 = y1 + KEY_IMAGE_SIZE - 1
-    return x1, y1, x2, y2
+    return KEY_RECTS[key_index]
 
 
 def build_key_blit(key_index: int, rgb565_bytes: bytes) -> bytes:
     """Build a blit packet for a single dynamic key image."""
     x1, y1, x2, y2 = key_rect(key_index)
-    return build_blit(x1, y1, x2, y2, rgb565_bytes)
+    expected = KEY_IMAGE_SIZE * KEY_IMAGE_SIZE * 2
+    if len(rgb565_bytes) != expected:
+        raise ValueError(
+            f"key payload size mismatch: expected {expected} bytes "
+            f"({KEY_IMAGE_SIZE}x{KEY_IMAGE_SIZE}x2), got {len(rgb565_bytes)}"
+        )
+    return build_blit_header(x1, y1, x2, y2) + rgb565_bytes
 
 
 def build_screen_blit(rgb565_bytes: bytes) -> bytes:
