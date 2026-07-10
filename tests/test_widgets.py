@@ -1,6 +1,5 @@
 """Tests for app.widgets - pure logic, no hardware needed."""
 
-import pytest
 from PIL import Image
 from app.widgets import (
     render_clock,

@@ -1,6 +1,5 @@
 """Tests for app.actions - pure logic, no hardware needed."""
 
-import pytest
 from unittest.mock import patch, MagicMock
 from app import actions
 

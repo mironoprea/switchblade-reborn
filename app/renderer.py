@@ -12,7 +12,7 @@ from typing import Optional
 
 from PIL import Image
 
-from .protocol import SCREEN_WIDTH, SCREEN_HEIGHT, KEY_IMAGE_SIZE, KEY_COUNT
+from .protocol import SCREEN_WIDTH, SCREEN_HEIGHT, KEY_IMAGE_SIZE
 
 
 # ---------------------------------------------------------------------------

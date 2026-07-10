@@ -1,6 +1,5 @@
 """
-Input listener: reads key events from the vendor IN endpoint and dispatches
-callbacks.  Runs in its own thread to avoid blocking the main loop.
+Input listener: reads the adaptive keys from HID and dispatches callbacks.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from .protocol import (
     VENDOR_PID,
     VENDOR_VID,
     parse_hid_key_event,
-    parse_key_event,
     KeyEvent,
 )
 from .usb_link import UsbLink
@@ -30,18 +28,15 @@ DEBOUNCE_MS = 150  # ignore repeats within this window
 
 
 class InputListener:
-    """Polls the vendor IN endpoint for key events in a worker thread."""
+    """Poll the non-keyboard HID collections in a worker thread."""
 
     def __init__(
         self,
         link: UsbLink,
         callback: Callable[[KeyEvent], None],
-        *,
-        read_timeout: int = 100,
     ) -> None:
         self._link = link
         self._callback = callback
-        self._read_timeout = read_timeout
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._last_key_time: dict[int, float] = {}
@@ -73,30 +68,8 @@ class InputListener:
                     self._close_hid()
                 time.sleep(0.1)
                 continue
-            info = self._link.info
-            if info is not None and info.in_endpoint is None:
-                self._poll_hid()
-                time.sleep(0.01)
-                continue
-            try:
-                data = self._link.read(length=512, timeout=self._read_timeout)
-            except ConnectionError:
-                time.sleep(0.5)
-                continue
-            except Exception as exc:
-                logger.debug("Input read error: %s", exc)
-                time.sleep(0.1)
-                continue
-
-            if not data:
-                continue
-
-            event = parse_key_event(data)
-            if event is None:
-                logger.debug("Unknown packet: %s", data.hex())
-                continue
-
-            self._dispatch(event)
+            self._poll_hid()
+            time.sleep(0.01)
 
     def _dispatch(self, event: KeyEvent) -> None:
         now = time.time()

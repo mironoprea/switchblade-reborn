@@ -31,13 +31,16 @@ dependencies = [
     "psutil>=5.9.0",
     "numpy>=1.24.0",
     "pywin32>=306;platform_system=='Windows'",
+    "pystray>=0.19.5;platform_system=='Windows'",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0"]
+dev = ["pytest>=7.0.0", "ruff>=0.12.0"]
+build = ["pyinstaller>=6.14.0"]
 
 [project.scripts]
 switchblade = "app.cli:main"
+switchblade-reborn = "app.desktop:main"
 
 [tool.setuptools]
 packages = ["app", "app.webui"]

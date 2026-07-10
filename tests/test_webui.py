@@ -1,7 +1,6 @@
 """Tests for app.webui - Flask web UI, no hardware needed."""
 
 import io
-import json
 import pytest
 from PIL import Image
 from unittest.mock import MagicMock

@@ -114,49 +114,6 @@ class TestKeyBlit:
             protocol.build_key_blit(0, b"\x00" * 10)
 
 
-class TestKeyEvent:
-    def test_parse_key_down(self):
-        # Key index 1 (1-indexed) = key 0, flag=1 = down
-        data = bytes([1, 1])
-        event = protocol.parse_key_event(data)
-        assert event is not None
-        assert event.key_index == 0
-        assert event.pressed is True
-
-    def test_parse_key_up(self):
-        data = bytes([5, 0])
-        event = protocol.parse_key_event(data)
-        assert event is not None
-        assert event.key_index == 4
-        assert event.pressed is False
-
-    def test_parse_key_index_10(self):
-        data = bytes([10, 1])
-        event = protocol.parse_key_event(data)
-        assert event is not None
-        assert event.key_index == 9
-        assert event.pressed is True
-
-    def test_parse_unknown_packet(self):
-        data = bytes([0xFF, 0xFF])
-        event = protocol.parse_key_event(data)
-        # Pattern 1: byte 0 = 255 is outside 1-10, no match.
-        # Pattern 2: only single-byte packets are treated as bitmasks, so this
-        # 2-byte junk is not misread as a key press.
-        assert event is None
-
-    def test_parse_empty(self):
-        event = protocol.parse_key_event(b"")
-        assert event is None
-
-    def test_parse_bitmask(self):
-        # Bit 3 set = key 3 pressed
-        data = bytes([0x08])
-        event = protocol.parse_key_event(data)
-        assert event is not None
-        assert event.key_index == 3
-
-
 class TestHidKeyEvent:
     def test_parse_hid_key_down(self):
         event = protocol.parse_hid_key_event(bytes.fromhex("0450000000000000"))

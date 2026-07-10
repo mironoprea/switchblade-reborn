@@ -5,7 +5,7 @@ Commands:
   run                Start the daemon
   profile <name>    Switch active profile (writes profiles.json; takes effect on daemon restart)
   blit-screen <img>  Blit an image to the trackpad screen
-  blit-key <N> <img> Blit an image to dynamic key N (0-9)
+  blit-key <N> <img> Blit an image to adaptive key N (0-9)
   validate           Validate profiles.json
   status             Show connection state and active profile
   install-autostart  Install Windows Task Scheduler autostart entry
@@ -19,15 +19,16 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 
 from . import profiles as profiles_mod
+from .paths import bootstrap_user_data, profiles_file, resource_root
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-PROFILES_FILE = BASE_DIR / "profiles" / "profiles.json"
+BASE_DIR = resource_root()
+PROFILES_FILE = profiles_file()
 
 
 def main() -> int:
+    bootstrap_user_data()
     parser = argparse.ArgumentParser(
         prog="app.cli",
         description="Switchblade Reborn — control app for Razer DeathStalker Ultimate",
@@ -38,7 +39,6 @@ def main() -> int:
     p_run = sub.add_parser("run", help="Start the daemon")
     p_run.add_argument("--profiles", default=str(PROFILES_FILE))
     p_run.add_argument("--interface", type=int, default=None)
-    p_run.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
     p_run.add_argument("--no-web", action="store_true")
 
     # profile
@@ -51,15 +51,13 @@ def main() -> int:
     p_blit_screen.add_argument("image")
     p_blit_screen.add_argument("--profiles", default=str(PROFILES_FILE))
     p_blit_screen.add_argument("--interface", type=int, default=None)
-    p_blit_screen.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
 
     # blit-key
-    p_blit_key = sub.add_parser("blit-key", help="Blit image to dynamic key N (0-9)")
+    p_blit_key = sub.add_parser("blit-key", help="Blit image to adaptive key N (0-9)")
     p_blit_key.add_argument("key", type=int)
     p_blit_key.add_argument("image")
     p_blit_key.add_argument("--profiles", default=str(PROFILES_FILE))
     p_blit_key.add_argument("--interface", type=int, default=None)
-    p_blit_key.add_argument("--backend", choices=["auto", "usb", "sdk"], default="auto")
 
     # validate
     p_validate = sub.add_parser("validate", help="Validate profiles.json")
@@ -68,6 +66,11 @@ def main() -> int:
     # status
     p_status = sub.add_parser("status", help="Show status")
     p_status.add_argument("--profiles", default=str(PROFILES_FILE))
+
+    p_brightness = sub.add_parser("brightness", help="Set adaptive-key or keyboard brightness")
+    p_brightness.add_argument("percent", type=int)
+    p_brightness.add_argument("--target", choices=["keys", "keyboard"], default="keys")
+    p_brightness.add_argument("--profiles", default=str(PROFILES_FILE))
 
     # install-autostart
     sub.add_parser("install-autostart", help="Install Windows autostart task")
@@ -92,6 +95,8 @@ def main() -> int:
         return _cmd_validate(args)
     elif args.command == "status":
         return _cmd_status(args)
+    elif args.command == "brightness":
+        return _cmd_brightness(args)
     elif args.command == "install-autostart":
         return _cmd_install_autostart()
     elif args.command == "uninstall-autostart":
@@ -106,7 +111,6 @@ def _cmd_run(args) -> int:
     run_daemon(
         profiles_path=args.profiles,
         interface=args.interface,
-        backend=args.backend,
         web=not args.no_web,
     )
     return 0
@@ -132,8 +136,6 @@ def _wait_for_device(daemon) -> bool:
     """
     import time
     from .usb_link import READY, INITIALIZING
-    if not daemon.prepare_backend():
-        return False
     for _ in range(10):
         state = daemon.link.poll()
         if state in (READY, INITIALIZING):
@@ -153,7 +155,6 @@ def _cmd_blit_screen(args) -> int:
     daemon = Daemon(
         args.profiles,
         interface=args.interface,
-        backend=args.backend,
         web=False,
     )
     if not _wait_for_device(daemon):
@@ -181,7 +182,6 @@ def _cmd_blit_key(args) -> int:
     daemon = Daemon(
         args.profiles,
         interface=args.interface,
-        backend=args.backend,
         web=False,
     )
     if not _wait_for_device(daemon):
@@ -218,6 +218,29 @@ def _cmd_status(args) -> int:
         print(json.dumps(status, indent=2))
         return 0
     except profiles_mod.ProfileError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _cmd_brightness(args) -> int:
+    if not 0 <= args.percent <= 100:
+        print("Error: brightness must be 0-100", file=sys.stderr)
+        return 2
+    from .brightness import BrightnessController, BrightnessError
+    try:
+        controller = BrightnessController()
+        if args.target == "keys":
+            controller.set_key_lcd_brightness(args.percent)
+            setting = "brightness"
+        else:
+            controller.set_keyboard_brightness(args.percent)
+            setting = "keyboard_brightness"
+        data = profiles_mod.load_profiles(args.profiles)
+        data.setdefault("settings", {})[setting] = args.percent
+        profiles_mod.save_profiles(args.profiles, data)
+        print(f"{args.target} brightness set to {args.percent}%")
+        return 0
+    except (BrightnessError, profiles_mod.ProfileError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

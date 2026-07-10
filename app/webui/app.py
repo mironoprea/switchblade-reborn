@@ -15,13 +15,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from .. import profiles as profiles_mod
+from ..paths import images_dir, profiles_dir, profiles_file
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-PROFILES_DIR = BASE_DIR / "profiles"
-PROFILES_FILE = PROFILES_DIR / "profiles.json"
-IMAGES_DIR = PROFILES_DIR / "images"
+PROFILES_DIR = profiles_dir()
+PROFILES_FILE = profiles_file()
+IMAGES_DIR = images_dir()
 
 
 def create_app(daemon) -> Flask:
@@ -70,8 +70,25 @@ def create_app(daemon) -> Flask:
     @app.route("/api/profiles/<name>/activate", methods=["POST"])
     def activate_profile(name):
         if daemon.switch_profile(name):
+            daemon.save_profiles()
             return jsonify({"ok": True, "active_profile": name})
         return jsonify({"ok": False, "error": f"Profile '{name}' not found."}), 400
+
+    @app.route("/api/images", methods=["GET"])
+    def list_images():
+        IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+        names = sorted(
+            item.name
+            for item in IMAGES_DIR.iterdir()
+            if item.is_file() and item.suffix.lower() in allowed
+        )
+        return jsonify({
+            "images": [
+                {"name": name, "path": f"images/{name}", "url": f"/api/images/{name}"}
+                for name in names
+            ]
+        })
 
     @app.route("/api/upload-image", methods=["POST"])
     def upload_image():

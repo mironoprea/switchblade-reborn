@@ -6,12 +6,15 @@ venv/
 .venv/
 *.egg-info/
 .pytest_cache/
+build/
+dist/
+release/
+*.spec.bak
 captures/*.pcap
 captures/*.pcapng
 captures/*.out
 captures/*.err
 captures/phone/
-captures/sdk-exerciser/
 profiles/images/*.png
 profiles/images/*.jpg
 !profiles/images/.gitkeep

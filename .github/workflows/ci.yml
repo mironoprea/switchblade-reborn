@@ -2,37 +2,45 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
-    branches: ["**"]
+    branches: [master]
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
-
+        include:
+          - os: windows-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.13"
+          - os: ubuntu-latest
+            python: "3.13"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+      - run: python -m app.cli validate
+      - run: python -m ruff check app tests tools
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-
-      - name: Run tests
-        run: |
-          python -m pytest tests/ -v
-
-      - name: Validate profiles
-        run: |
-          python -m app.cli validate
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -e ".[dev,build]"
+      - run: .\scripts\build.ps1 -SkipInstaller
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SwitchbladeReborn-portable
+          path: dist/SwitchbladeReborn/

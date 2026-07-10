@@ -32,7 +32,7 @@ SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
 
 KEY_COUNT = 10
-KEY_IMAGE_SIZE = 115       # official SDK key bitmap size
+KEY_IMAGE_SIZE = 115       # measured adaptive-key bitmap size
 
 VENDOR_VID = 0x1532
 VENDOR_PID = 0x0114
@@ -45,10 +45,9 @@ BULK_IN_EP = 0x02
 HID_KEY_REPORT_ID = 0x04
 HID_KEY_BASE = 0x50
 
-# Captured from the official SwitchBlade SDK client path.  The SDK opens
-# the same device interface with suffix "\2" and writes these blit headers
-# followed by a 115x115 RGB565 payload.  The header rectangles are 116x116
-# in coordinate space; the device/driver accepts the 115x115 payload.
+# Captured from hardware display traffic. Key images use endpoint 0x02 and
+# these blit headers followed by a 115x115 RGB565 payload. The rectangles are
+# 116x116 in coordinate space; the device accepts the 115x115 payload.
 KEY_RECTS: tuple[tuple[int, int, int, int], ...] = (
     (9, 318, 124, 433),
     (178, 318, 293, 433),
@@ -133,14 +132,14 @@ def build_blit_header(
 # ---------------------------------------------------------------------------
 
 def key_rect(key_index: int) -> tuple[int, int, int, int]:
-    """Return the captured SDK blit rectangle for a dynamic key."""
+    """Return the captured blit rectangle for an adaptive key."""
     if not 0 <= key_index < KEY_COUNT:
         raise ValueError(f"key index must be 0-{KEY_COUNT - 1}, got {key_index}")
     return KEY_RECTS[key_index]
 
 
 def build_key_blit(key_index: int, rgb565_bytes: bytes) -> bytes:
-    """Build a blit packet for a single dynamic key image."""
+    """Build a blit packet for a single adaptive-key image."""
     x1, y1, x2, y2 = key_rect(key_index)
     expected = KEY_IMAGE_SIZE * KEY_IMAGE_SIZE * 2
     if len(rgb565_bytes) != expected:
@@ -156,13 +155,39 @@ def build_screen_blit(rgb565_bytes: bytes) -> bytes:
     return build_blit(0, 0, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1, rgb565_bytes)
 
 
+def build_brightness_report(channel: int, percent: int, *, query: bool = False) -> bytes:
+    """Build the captured 90-byte Razer display-brightness report.
+
+    Channel 1 is the normal keyboard backlight and channel 2 is the bank of ten
+    adaptive-key LCD backlights.  The device uses an 8-bit brightness value and
+    an XOR checksum over bytes 6 through 87.
+    """
+    if channel not in (1, 2):
+        raise ValueError("brightness channel must be 1 or 2")
+    if not 0 <= percent <= 100:
+        raise ValueError("brightness must be 0-100")
+    report = bytearray(90)
+    report[2] = 0xFF
+    report[6] = 0x03
+    report[7] = 0x09
+    report[8] = 0x81 if query else 0x01
+    report[10] = channel
+    if not query:
+        report[11] = round(percent * 255 / 100)
+    checksum = 0
+    for value in report[6:88]:
+        checksum ^= value
+    report[88] = checksum
+    return bytes(report)
+
+
 # ---------------------------------------------------------------------------
 # Key event parsing
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class KeyEvent:
-    """A parsed dynamic-key event from the vendor IN endpoint."""
+    """A parsed adaptive-key HID event."""
     key_index: int
     pressed: bool
     raw: bytes
@@ -170,42 +195,6 @@ class KeyEvent:
     def __str__(self) -> str:
         state = "down" if self.pressed else "up"
         return f"key {self.key_index} {state}"
-
-
-def parse_key_event(data: bytes) -> Optional[KeyEvent]:
-    """Parse a raw IN-endpoint packet into a ``KeyEvent`` or ``None``.
-
-    The exact format is [UNKNOWN] until confirmed by capture.  The seed
-    hypothesis (from rzswitchblade endpoint 0x02) is a short packet where
-    byte 0 is the key index (1-indexed: 1-10) and byte 1 indicates down/up.
-
-    If the packet doesn't match any known pattern, returns ``None`` so the
-    caller can log raw hex for analysis.
-    """
-    if not data:
-        return None
-
-    # Pattern 1: [key_1indexed, down/up_flag, ...]
-    #   key index 1-10, flag: nonzero = down, zero = up
-    if len(data) >= 2:
-        idx = data[0]
-        if 1 <= idx <= KEY_COUNT:
-            pressed = data[1] != 0
-            return KeyEvent(key_index=idx - 1, pressed=pressed, raw=bytes(data))
-
-    # Pattern 2: single-byte bitmask (each bit = one key, down when set).
-    # Restricted to length-1 packets: the old `mask < (1 << KEY_COUNT)` bound was
-    # always true for a byte (max 255 < 1024), so any unmatched multi-byte junk
-    # was misread as a key press.  Returns the lowest set bit.  Note this pattern
-    # cannot express key-up.
-    if len(data) == 1:
-        mask = data[0]
-        if mask != 0:
-            for i in range(KEY_COUNT):
-                if mask & (1 << i):
-                    return KeyEvent(key_index=i, pressed=True, raw=bytes(data))
-
-    return None
 
 
 def parse_hid_key_event(data: bytes, pressed_key: Optional[int] = None) -> Optional[KeyEvent]:

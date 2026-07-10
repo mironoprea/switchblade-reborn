@@ -1,4 +1,0 @@
-interface:
-  display_name: "Switchblade Hardware"
-  short_description: "Work on Razer DeathStalker Switchblade hardware bring-up."
-  default_prompt: "Use this skill to continue Switchblade Reborn hardware bring-up and verification."

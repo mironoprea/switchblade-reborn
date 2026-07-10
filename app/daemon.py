@@ -17,8 +17,6 @@ import signal
 import sys
 import threading
 import time
-from types import SimpleNamespace
-from pathlib import Path
 from typing import Optional
 
 from . import protocol
@@ -34,20 +32,19 @@ from .renderer import (
 )
 from .usb_link import (
     UsbLink,
-    is_synapse_running,
     DISCONNECTED,
     INITIALIZING,
     READY,
     ERROR_FATAL,
 )
 from .widgets import render_widget_board
-from .sdk_backend import SdkBackendError, SdkDisplayBackend, is_sdk_available
+from .paths import profiles_dir, profiles_file
+from .brightness import BrightnessController, BrightnessError
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-PROFILES_DIR = BASE_DIR / "profiles"
-PROFILES_FILE = PROFILES_DIR / "profiles.json"
+PROFILES_DIR = profiles_dir()
+PROFILES_FILE = profiles_file()
 
 
 class Daemon:
@@ -58,16 +55,12 @@ class Daemon:
         profiles_path: Optional[str] = None,
         *,
         interface: Optional[int] = None,
-        backend: str = "auto",
         web: bool = True,
     ) -> None:
         self.profiles_path = profiles_path or str(PROFILES_FILE)
         self.profiles_data: dict = {}
-        if backend not in {"auto", "usb", "sdk"}:
-            raise ValueError("backend must be 'auto', 'usb', or 'sdk'")
-        self.backend = backend
         self.link = UsbLink(interface=interface)
-        self.sdk_display: Optional[SdkDisplayBackend] = None
+        self.brightness = BrightnessController()
         self.renderer = ScreenRenderer()
         self.input_listener: Optional[InputListener] = None
         self._running = False
@@ -78,6 +71,7 @@ class Daemon:
         self._auto_switcher = None
         self._web_thread: Optional[threading.Thread] = None
         self._web_app = None
+        self._web_server = None
         self._enable_web = web
         # Serializes all rendering: the main loop's widget refresh runs on the
         # main thread while profile switches arrive from the auto-switcher,
@@ -90,14 +84,6 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        # Synapse guard
-        if is_synapse_running():
-            logger.error(
-                "Razer Synapse appears to be running. Please fully exit Synapse "
-                "(tray → Exit, kill Rz* processes) before starting Switchblade Reborn."
-            )
-            sys.exit(1)
-
         # Load profiles
         try:
             self.profiles_data = profiles_mod.load_profiles(self.profiles_path)
@@ -106,13 +92,10 @@ class Daemon:
             sys.exit(1)
 
         self._current_profile_name = self.profiles_data.get("active_profile", "default")
-        if not self.prepare_backend():
-            logger.error("Display backend could not be prepared.")
-            sys.exit(1)
-
         # Signal handlers for clean shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
 
         self._running = True
 
@@ -130,46 +113,15 @@ class Daemon:
         logger.info("Daemon started. Active profile: %s", self._current_profile_name)
         self._main_loop()
 
-    def prepare_backend(self) -> bool:
-        """Select and initialize the display backend.
-
-        ``auto`` prefers the official Windows SDK when present.  That path is
-        the only verified way to update the separate physical LCD keys while
-        the Razer driver owns the vendor interface.  ``usb`` keeps the direct
-        WinUSB bulk path for environments where interface 3 is bound to WinUSB.
-        """
-        if self.sdk_display is not None:
-            return True
-        if self.backend in {"auto", "sdk"} and is_sdk_available():
-            try:
-                self.sdk_display = SdkDisplayBackend()
-                self.sdk_display.start()
-                self.link = _HidOnlyLink()
-                logger.info("Display backend: Razer SwitchBlade SDK.")
-                return True
-            except SdkBackendError as exc:
-                logger.warning("SDK backend unavailable: %s", exc)
-                self.sdk_display = None
-                if self.backend == "sdk":
-                    return False
-        if self.backend == "sdk":
-            logger.error("Razer SwitchBlade SDK is not available.")
-            return False
-        logger.info("Display backend: direct USB.")
-        return True
-
     def _start_web(self) -> None:
         try:
             from .webui.app import create_app
+            from werkzeug.serving import make_server
             self._web_app = create_app(self)
+            self._web_server = make_server("127.0.0.1", 8377, self._web_app, threaded=True)
             self._web_thread = threading.Thread(
-                target=self._web_app.run,
-                kwargs={
-                    "host": "127.0.0.1",
-                    "port": 8377,
-                    "debug": False,
-                    "use_reloader": False,
-                },
+                target=self._web_server.serve_forever,
+                name="switchblade-web",
                 daemon=True,
             )
             self._web_thread.start()
@@ -235,6 +187,28 @@ class Daemon:
         with self._render_lock:
             self.renderer.force_full_redraw()
             self._render_full_profile()
+            self._apply_brightness()
+
+    def _apply_brightness(self) -> None:
+        settings = self.profiles_data.get("settings", {})
+        try:
+            if "brightness" in settings:
+                self.brightness.set_key_lcd_brightness(int(settings["brightness"]))
+            if "keyboard_brightness" in settings:
+                self.brightness.set_keyboard_brightness(int(settings["keyboard_brightness"]))
+        except (BrightnessError, OSError, ValueError) as exc:
+            logger.warning("Brightness control unavailable: %s", exc)
+
+    def set_brightness(self, percent: int, *, target: str = "keys") -> None:
+        if target == "keys":
+            self.brightness.set_key_lcd_brightness(percent)
+            self.profiles_data.setdefault("settings", {})["brightness"] = percent
+        elif target == "keyboard":
+            self.brightness.set_keyboard_brightness(percent)
+            self.profiles_data.setdefault("settings", {})["keyboard_brightness"] = percent
+        else:
+            raise ValueError("target must be 'keys' or 'keyboard'")
+        self.save_profiles()
 
     def _initialize_device(self) -> None:
         """Send the device init/mode-switch sequence, if any.
@@ -275,17 +249,11 @@ class Daemon:
 
         result = self.renderer.update(fb)
         if result is not None:
-            if self.sdk_display is not None:
-                try:
-                    self.sdk_display.blit_screen_rgb565(fb)
-                except SdkBackendError as exc:
-                    logger.debug("SDK screen blit failed: %s", exc)
-            else:
-                rect, payload = result
-                self._blit_rect(rect, payload)
+            rect, payload = result
+            self._blit_rect(rect, payload)
 
     def _render_all_keys(self) -> None:
-        """Render dynamic key images when the active backend supports them."""
+        """Render adaptive-key images when endpoint 0x02 is available."""
         if not self._key_images_supported():
             logger.debug("Skipping key-image blits; no key-image endpoint is available.")
             return
@@ -322,12 +290,6 @@ class Daemon:
             logger.debug("Blit failed (device may have disconnected): %s", exc)
 
     def _blit_key(self, key_index: int, rgb565: bytes) -> None:
-        if self.sdk_display is not None:
-            try:
-                self.sdk_display.blit_key_rgb565(key_index, rgb565)
-            except SdkBackendError as exc:
-                logger.debug("SDK key blit failed: %s", exc)
-            return
         packet = protocol.build_key_blit(key_index, rgb565)
         try:
             self._write_key_blit_packet(packet)
@@ -351,9 +313,7 @@ class Daemon:
         self.link.write_key_transfer(packet[protocol.HEADER_SIZE:])
 
     def _key_images_supported(self) -> bool:
-        """Return True when the selected backend can update physical key LCDs."""
-        if self.sdk_display is not None:
-            return True
+        """Return True when endpoint 0x02 can update the adaptive-key LCDs."""
         info = getattr(self.link, "info", None)
         return getattr(info, "key_out_endpoint", None) is not None
 
@@ -464,13 +424,6 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def blit_screen(self, image_path: str) -> None:
-        if self.sdk_display is not None:
-            try:
-                self.sdk_display.blit_screen_image(image_path)
-            except SdkBackendError as exc:
-                raise ConnectionError(str(exc)) from exc
-            logger.info("SDK screen blit complete: %s", image_path)
-            return
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
@@ -480,13 +433,6 @@ class Daemon:
         logger.info("Screen blit complete: %s", image_path)
 
     def blit_key(self, key_index: int, image_path: str) -> None:
-        if self.sdk_display is not None:
-            try:
-                self.sdk_display.blit_key_image(key_index, image_path)
-            except SdkBackendError as exc:
-                raise ConnectionError(str(exc)) from exc
-            logger.info("SDK key blit complete: key=%d image=%s", key_index, image_path)
-            return
         if not self.link.is_ready():
             logger.error("Device not ready.")
             return
@@ -510,7 +456,14 @@ class Daemon:
             "connection_state": self.link.state,
             "active_profile": self._current_profile_name,
             "profiles": list(self.profiles_data.get("profiles", {}).keys()),
+            "display_backend": "usb",
+            "profiles_file": str(self.profiles_path),
+            "device_error": self.link.last_error,
         }
+
+    def stop(self) -> None:
+        """Request a clean shutdown from the desktop/tray process."""
+        self._running = False
 
     # ------------------------------------------------------------------
     # Shutdown
@@ -526,8 +479,9 @@ class Daemon:
             self.input_listener.stop()
         if self._auto_switcher:
             self._auto_switcher.stop()
-        if self.sdk_display:
-            self.sdk_display.close()
+        if self._web_server:
+            self._web_server.shutdown()
+            self._web_server = None
         # Web UI runs as daemon thread - it will be killed when the process exits
         self.link.disconnect()
         logger.info("Shutdown complete.")
@@ -537,7 +491,6 @@ def run_daemon(
     profiles_path: Optional[str] = None,
     *,
     interface: Optional[int] = None,
-    backend: str = "auto",
     web: bool = True,
 ) -> None:
     """Entry point: create and start the daemon."""
@@ -545,29 +498,5 @@ def run_daemon(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    daemon = Daemon(profiles_path, interface=interface, backend=backend, web=web)
+    daemon = Daemon(profiles_path, interface=interface, web=web)
     daemon.start()
-
-
-class _HidOnlyLink:
-    """Minimal ready link used when the SDK owns display output.
-
-    The dynamic LCD key events are HID reports, so the existing InputListener can
-    keep polling those collections as long as the link looks READY and has no
-    bulk IN endpoint.
-    """
-
-    state = READY
-    info = SimpleNamespace(in_endpoint=None)
-
-    def poll(self) -> str:
-        return READY
-
-    def is_ready(self) -> bool:
-        return True
-
-    def mark_ready(self) -> None:
-        return
-
-    def disconnect(self) -> None:
-        return

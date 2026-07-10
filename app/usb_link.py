@@ -107,6 +107,7 @@ class UsbLink:
         self.dev = None
         self.info: Optional[DeviceInfo] = None
         self.state = DISCONNECTED
+        self.last_error: Optional[str] = None
         self._last_try = 0.0
         self._last_presence_check = 0.0
         self._io_lock = threading.Lock()
@@ -245,6 +246,7 @@ class UsbLink:
 
     def _try_connect(self) -> None:
         if usb is None:
+            self.last_error = "USB support is not installed"
             logger.error("pyusb not installed. Install with: pip install pyusb libusb-package")
             self.state = ERROR_FATAL
             return
@@ -259,6 +261,7 @@ class UsbLink:
 
             info = self._find_vendor_interface()
             if info is None:
+                self.last_error = "The vendor display interface was not found"
                 logger.error("No suitable vendor interface found on the device.")
                 self.state = ERROR_FATAL
                 return
@@ -282,11 +285,17 @@ class UsbLink:
                 usb.util.claim_interface(self.dev, info.vendor_interface)
             except Exception as exc:
                 logger.error("Cannot claim interface %d: %s", info.vendor_interface, exc)
-                logger.error("Another program may own the device. Exiting.")
-                self.state = ERROR_FATAL
+                self.last_error = (
+                    "Cannot open MI_03. Ensure that Interface 3 uses WinUSB and "
+                    "that no other application owns it."
+                )
+                logger.error("%s Retrying.", self.last_error)
+                self._release()
+                self.state = DISCONNECTED
                 return
 
             self.info = info
+            self.last_error = None
             self.state = INITIALIZING
             logger.info("Device state: INITIALIZING — %s", info)
 
@@ -436,34 +445,3 @@ class UsbLink:
             pass
         self.dev = None
         self.info = None
-
-
-# ---------------------------------------------------------------------------
-# Synapse guard
-# ---------------------------------------------------------------------------
-
-SYNAPSE_PROCESS_NAMES = {
-    "razer synapse",
-    "rzsynapse",
-    "rzsynapse.exe",
-    "razer synapse 2.0",
-    "razerconfigurator",
-    "rzcredentialprovider",
-}
-
-
-def is_synapse_running() -> bool:
-    """Check if Razer Synapse processes are running."""
-    try:
-        import psutil
-    except ImportError:
-        return False
-
-    for proc in psutil.process_iter(["name"]):
-        name = proc.info.get("name", "")
-        if not name:
-            continue
-        lower = name.lower()
-        if any(s in lower for s in SYNAPSE_PROCESS_NAMES):
-            return True
-    return False

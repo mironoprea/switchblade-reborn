@@ -1,6 +1,5 @@
 """Tests for app.auto_switch - pure logic, no hardware needed."""
 
-import pytest
 from unittest.mock import patch, MagicMock
 from app.auto_switch import AutoSwitcher, get_foreground_exe
 
